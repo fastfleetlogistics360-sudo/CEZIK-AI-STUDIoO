@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <title>Confirm your CEZIK account</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#080510;font-family:Arial,Helvetica,sans-serif;color:#f7f4ff;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+      Confirm your email to start creating with CEZIK AI Studio.
+    </div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#080510;margin:0;padding:0;width:100%;">
+      <tr>
+        <td align="center" style="padding:42px 18px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;margin:0 auto;">
+            <tr>
+              <td align="center" style="padding:0 0 24px;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    <td style="width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#20d9ff 0%,#7343ff 48%,#f03bda 100%);text-align:center;vertical-align:middle;font-size:18px;font-weight:800;color:#ffffff;box-shadow:0 0 20px rgba(130,66,255,.65);">C</td>
+                    <td style="padding-left:10px;vertical-align:middle;color:#ffffff;font-size:15px;font-weight:800;letter-spacing:3px;line-height:15px;">CEZIK <span style="color:#b656ff;">AI</span><br><span style="color:#7399ff;font-size:7px;letter-spacing:5px;font-weight:500;">STUDIO</span></td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="border:1px solid #7f4cc1;border-radius:18px;background-color:#120d21;background-image:linear-gradient(145deg,#1c1033 0%,#10172a 100%);overflow:hidden;box-shadow:0 20px 45px rgba(0,0,0,.45);">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    <td style="height:5px;background:linear-gradient(90deg,#20d9ff 0%,#7040ff 50%,#f03bda 100%);font-size:0;line-height:0;">&nbsp;</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:43px 42px 38px;">
+                      <p style="margin:0 0 14px;color:#70ddff;font-size:11px;font-weight:700;letter-spacing:2px;line-height:16px;">WELCOME TO THE STUDIO</p>
+                      <h1 style="margin:0 0 18px;color:#ffffff;font-size:32px;font-weight:700;letter-spacing:-1px;line-height:39px;">Your next idea is<br>ready for motion.</h1>
+                      <p style="margin:0 0 28px;color:#c7c0d3;font-size:15px;line-height:24px;">Hi {{ if .Data.full_name }}{{ .Data.full_name }}{{ else }}Creator{{ end }}, confirm your email address to activate your CEZIK AI Studio account and begin creating.</p>
+                      <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 29px;">
+                        <tr>
+                          <td align="center" style="border-radius:9px;background:linear-gradient(105deg,#20d9ff 0%,#7445ff 47%,#f03bda 100%);box-shadow:0 8px 22px rgba(110,59,230,.45);">
+                            <a href="{{ .ConfirmationURL }}" target="_blank" style="display:inline-block;padding:15px 23px;color:#ffffff;font-size:14px;font-weight:700;line-height:18px;text-decoration:none;">Confirm my email&nbsp;&nbsp;→</a>
+                          </td>
+                        </tr>
+                      </table>
+                      <p style="margin:0;color:#8f879f;font-size:12px;line-height:19px;">This link is unique to you. If you did not create a CEZIK account, you can safely ignore this email.</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:25px 20px 0;color:#777083;font-size:11px;line-height:18px;">CEZIK AI Studio · Create without limits<br><a href="{{ .SiteURL }}" style="color:#9c8aff;text-decoration:none;">Open CEZIK AI Studio</a></td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
