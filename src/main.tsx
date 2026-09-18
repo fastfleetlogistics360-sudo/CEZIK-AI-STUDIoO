@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
+import type { Session } from '@supabase/supabase-js'
 import {
-  ArrowRight, Bell, ChevronDown, Clapperboard, Clock3, Command, Copy,
+  ArrowRight, Bell, CheckCircle2, ChevronDown, Clapperboard, Clock3, Command, Copy,
   Download, FileVideo, FolderOpen, Grid2X2, Image, Layers3, LayoutDashboard,
-  Menu, MoreHorizontal, Music2, PanelLeftClose, Play, Plus, Search, Settings,
+  LoaderCircle, LockKeyhole, Mail, Menu, MoreHorizontal, Music2, PanelLeftClose, Play, Plus, Search, Settings,
   SlidersHorizontal, Sparkles, Upload, Video, WandSparkles, X, Zap
 } from 'lucide-react'
+import { isSupabaseConfigured, supabase } from './lib/supabase'
 import './styles.css'
 import './neon.css'
 
-type Page = 'welcome' | 'home' | 'projects' | 'generate' | 'editor'
+type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'generate' | 'editor'
+type AuthMode = 'signin' | 'signup' | 'reset'
 
 const navItems: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'home', label: 'Home', icon: LayoutDashboard },
@@ -74,15 +77,15 @@ function Shell({ page, onPage, children, title, editor = false }: { page: Page; 
   return <div className={`app-shell ${editor ? 'editor-shell' : ''}`}><Sidebar page={page} onPage={onPage} /><main><TopBar onPage={onPage} title={title} compact={editor} />{children}</main></div>
 }
 
-function Welcome({ onPage }: { onPage: (p: Page) => void }) {
+function Welcome({ onAuth, onExplore }: { onAuth: (mode: AuthMode) => void; onExplore: () => void }) {
   return <div className="welcome">
-    <header className="welcome-nav"><Logo /><div><Button variant="quiet" onClick={() => onPage('home')}>Sign in</Button><Button onClick={() => onPage('home')}>Start creating <ArrowRight size={16} /></Button></div></header>
+    <header className="welcome-nav"><Logo /><div className="welcome-actions"><Button variant="quiet" onClick={() => onAuth('signin')}>Sign in</Button><Button onClick={() => onAuth('signup')}>Start creating <ArrowRight size={16} /></Button></div></header>
     <div className="ambient ambient-one" /><div className="ambient ambient-two" />
     <section className="hero">
       <div className="eyebrow"><span /><span>THE CREATIVE OPERATING SYSTEM</span></div>
       <h1>Shape the impossible<br /><i>into moving stories.</i></h1>
       <p>CEZIK AI Studio brings every part of video creation into one intelligent, effortless creative environment.</p>
-      <div className="hero-cta"><Button onClick={() => onPage('home')}>Start creating free <ArrowRight size={17} /></Button><Button variant="ghost" onClick={() => onPage('editor')}><Play size={15} fill="currentColor" /> Explore the studio</Button></div>
+      <div className="hero-cta"><Button onClick={() => onAuth('signup')}>Start creating free <ArrowRight size={17} /></Button><Button variant="ghost" onClick={onExplore}><Play size={15} fill="currentColor" /> Explore the studio</Button></div>
       <div className="hero-art" aria-hidden="true">
         <div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="floating-card card-left"><span className="tiny-label">AI DIRECTOR</span><div className="waveform">⌁⌁⌁⌁⌁⌁</div><strong>Refine the lighting<br />and make it feel cinematic.</strong></div>
         <div className="floating-card card-right"><span className="spark-icon">✦</span><span>Generation complete</span><b>00:16</b></div>
@@ -94,9 +97,9 @@ function Welcome({ onPage }: { onPage: (p: Page) => void }) {
   </div>
 }
 
-function Dashboard({ onPage }: { onPage: (p: Page) => void }) {
+function Dashboard({ onPage, name }: { onPage: (p: Page) => void; name: string }) {
   return <Shell page="home" onPage={onPage}><div className="content dashboard">
-    <section className="dashboard-hero"><div><span className="overline">THURSDAY, SEPTEMBER 4</span><h1>Good morning, Alex.</h1><p>What will you bring to life today?</p></div><Button onClick={() => onPage('generate')}><Sparkles size={17} /> Create with AI</Button></section>
+    <section className="dashboard-hero"><div><span className="overline">THURSDAY, SEPTEMBER 4</span><h1>Good morning, {name}.</h1><p>What will you bring to life today?</p></div><Button onClick={() => onPage('generate')}><Sparkles size={17} /> Create with AI</Button></section>
     <section className="tool-grid">{tools.map(([name, desc, Icon, color]) => <button className="tool-card" key={name as string} onClick={() => onPage(name === 'AI Video Editor' ? 'editor' : 'generate')}><span className={`tool-icon ${color}`}><Icon size={21} /></span><span><strong>{name as string}</strong><small>{desc as string}</small></span><ArrowRight size={18} /></button>)}</section>
     <section className="section-heading"><div><h2>Continue creating</h2><p>Your recent projects</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></section>
     <section className="project-row">{projects.slice(0, 4).map((project) => <ProjectCard key={project.name} project={project} onClick={() => onPage('editor')} />)}<button onClick={() => onPage('projects')} className="all-projects"> <FolderOpen size={22} /><span>View all projects</span><ArrowRight size={16} /></button></section>
@@ -141,6 +144,107 @@ function Editor({ onPage }: { onPage: (p: Page) => void }) {
   </div><section className="timeline"><div className="timeline-head"><div><button><Plus size={16} /></button><button><SlidersHorizontal size={16} /></button><span>00:00</span></div><div><button><span className="mag">−</span></button><input type="range" defaultValue="42" /><button><span className="mag">+</span></button></div></div><div className="ruler"><span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span><span>00:20</span></div><div className="track-area"><div className="track-label"><Video size={15} /> Video 1</div><div className="track clip-main"><b className="playhead" /><div className="mini-frames">✦　　◒　　□　　✦　　◒　　□</div></div><div className="track-label"><Music2 size={15} /> Audio 1</div><div className="track audio-track"><div className="audio-wave">∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿</div></div></div></section></Shell>
 }
 
-function App() { const [page, setPage] = useState<Page>('welcome'); useEffect(() => { window.scrollTo({ top: 0 }) }, [page]); return page === 'welcome' ? <Welcome onPage={setPage} /> : page === 'home' ? <Dashboard onPage={setPage} /> : page === 'projects' ? <Projects onPage={setPage} /> : page === 'generate' ? <Generator onPage={setPage} /> : <Editor onPage={setPage} /> }
+function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode; onModeChange: (mode: AuthMode) => void; onBack: () => void; onSuccess: () => void }) {
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
+
+  const setMode = (nextMode: AuthMode) => { setMessage(null); setPassword(''); setConfirmPassword(''); onModeChange(nextMode) }
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setMessage(null)
+    if (!supabase || !isSupabaseConfigured) {
+      setMessage({ type: 'error', text: 'Supabase still needs its project URL and publishable key. Add them to .env.local to enable live authentication.' })
+      return
+    }
+    if (mode === 'signup' && password !== confirmPassword) {
+      setMessage({ type: 'error', text: 'Your passwords do not match. Please try again.' })
+      return
+    }
+    setLoading(true)
+    try {
+      if (mode === 'reset') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin })
+        if (error) throw error
+        setMessage({ type: 'success', text: 'Password reset instructions are on their way. Check your inbox.' })
+      } else if (mode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: fullName.trim() }, emailRedirectTo: window.location.origin },
+        })
+        if (error) throw error
+        if (data.session) onSuccess()
+        else setMessage({ type: 'success', text: 'Account created. Please confirm your email, then return to sign in.' })
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) throw error
+        onSuccess()
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Something went wrong. Please try again.' })
+    } finally { setLoading(false) }
+  }
+
+  const copy = mode === 'signup'
+    ? { eyebrow: 'YOUR CREATIVE ACCOUNT', title: <>Start making the <i>impossible.</i></>, detail: 'Create your CEZIK account to save ideas, collaborate, and create without limits.', submit: 'Create account' }
+    : mode === 'reset'
+      ? { eyebrow: 'ACCOUNT RECOVERY', title: <>Reset your <i>password.</i></>, detail: 'Tell us where to send secure recovery instructions.', submit: 'Send reset link' }
+      : { eyebrow: 'WELCOME BACK', title: <>Welcome back to <i>CEZIK.</i></>, detail: 'Sign in to continue building your next moving story.', submit: 'Sign in' }
+
+  return <main className="auth-page">
+    <div className="auth-ambient auth-ambient-one" /><div className="auth-ambient auth-ambient-two" />
+    <header className="auth-nav"><button onClick={onBack} className="auth-logo-button" aria-label="Back to CEZIK home"><Logo /></button><button className="back-home" onClick={onBack}>← Back to home</button></header>
+    <section className="auth-layout">
+      <div className="auth-intro"><span className="overline"><Sparkles size={13} /> {copy.eyebrow}</span><h1>{copy.title}</h1><p>{copy.detail}</p><div className="auth-feature"><span><CheckCircle2 size={17} /></span><p><strong>Your work, always ready.</strong> Your projects and creative preferences stay securely connected to your account.</p></div></div>
+      <form className="auth-card" onSubmit={submit}>
+        <div className="auth-card-heading"><div><h2>{mode === 'signup' ? 'Create your account' : mode === 'reset' ? 'Recover access' : 'Sign in'}</h2><p>{mode === 'signup' ? 'Already have an account?' : mode === 'signin' ? 'New to CEZIK?' : 'Remembered your password?' } <button type="button" onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}>{mode === 'signup' ? 'Sign in' : 'Create one'}</button></p></div><span className="auth-mark"><Logo markOnly /></span></div>
+        {mode === 'signup' && <label className="auth-field"><span>Full name</span><div><Mail size={16} /><input required value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Your name" autoComplete="name" /></div></label>}
+        <label className="auth-field"><span>Email address</span><div><Mail size={16} /><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" /></div></label>
+        {mode !== 'reset' && <label className="auth-field"><span>Password</span><div><LockKeyhole size={16} /><input required minLength={8} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} /></div></label>}
+        {mode === 'signup' && <label className="auth-field"><span>Confirm password</span><div><LockKeyhole size={16} /><input required minLength={8} type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Repeat your password" autoComplete="new-password" /></div></label>}
+        {mode === 'signin' && <button type="button" className="forgot-password" onClick={() => setMode('reset')}>Forgot password?</button>}
+        {message && <div role="status" className={`auth-message ${message.type}`}><span>{message.type === 'success' ? <CheckCircle2 size={16} /> : <X size={16} />}</span>{message.text}</div>}
+        <button className="auth-submit" disabled={loading}>{loading ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}{loading ? 'Please wait…' : copy.submit}</button>
+        {mode === 'signup' && <p className="terms">By creating an account, you agree to CEZIK’s Terms of Service and Privacy Policy.</p>}
+      </form>
+    </section>
+  </main>
+}
+
+function App() {
+  const [page, setPage] = useState<Page>('welcome')
+  const [authMode, setAuthMode] = useState<AuthMode>('signin')
+  const [session, setSession] = useState<Session | null>(null)
+  const [authReady, setAuthReady] = useState(!supabase)
+  const displayName = session?.user.user_metadata.full_name || session?.user.email?.split('@')[0] || 'Creator'
+
+  useEffect(() => { window.scrollTo({ top: 0 }) }, [page])
+  useEffect(() => {
+    if (!supabase) return
+    let mounted = true
+    supabase.auth.getSession().then(({ data }) => { if (mounted) { setSession(data.session); setAuthReady(true) } })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!mounted) return
+      setSession(nextSession)
+      setAuthReady(true)
+      if (nextSession) setPage((current) => current === 'welcome' || current === 'auth' ? 'home' : current)
+    })
+    return () => { mounted = false; subscription.unsubscribe() }
+  }, [])
+
+  const beginAuth = (mode: AuthMode) => { setAuthMode(mode); setPage('auth') }
+  const navigate = (nextPage: Page) => {
+    if (nextPage !== 'welcome' && nextPage !== 'auth' && !session) beginAuth('signin')
+    else setPage(nextPage)
+  }
+  if (!authReady) return <div className="auth-loading"><Logo /><span>Preparing your studio…</span></div>
+  if (page === 'welcome') return <Welcome onAuth={beginAuth} onExplore={() => navigate('editor')} />
+  if (page === 'auth') return <AuthScreen mode={authMode} onModeChange={setAuthMode} onBack={() => setPage('welcome')} onSuccess={() => setPage('home')} />
+  return page === 'home' ? <Dashboard onPage={navigate} name={displayName} /> : page === 'projects' ? <Projects onPage={navigate} /> : page === 'generate' ? <Generator onPage={navigate} /> : <Editor onPage={navigate} />
+}
 
 createRoot(document.getElementById('root')!).render(<App />)
