@@ -1,0 +1,8 @@
+# CEZIK production function configuration.
+# submit-ai-job keeps JWT verification enabled because the client invokes it.
+# process-ai-job has its own mandatory CEZIK_WORKER_SECRET check so a trusted
+# worker or provider webhook can call it without a user JWT.
+
+[functions.process-ai-job]
+verify_jwt = false
+

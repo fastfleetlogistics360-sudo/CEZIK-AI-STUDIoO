@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Session } from '@supabase/supabase-js'
 import {
@@ -8,6 +8,7 @@ import {
   SlidersHorizontal, Sparkles, Upload, Video, WandSparkles, X, Zap
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
+import { isActivityAvailable, loadStudioData, type Creation, type StudioData } from './lib/cezik'
 import './styles.css'
 import './neon.css'
 
@@ -24,27 +25,59 @@ const navItems: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'home', label: 'Settings', icon: Settings },
 ]
 
-const projects = [
-  { name: 'Neon City', type: 'Product Film', date: 'Edited 2h ago', status: 'Ready', color: 'neon', progress: 100 },
-  { name: 'Apex Campaign', type: 'Social Launch', date: 'Edited yesterday', status: 'In progress', color: 'apex', progress: 72 },
-  { name: 'Humanity / 01', type: 'Brand Story', date: 'Created Aug 26', status: 'Ready', color: 'humanity', progress: 100 },
-  { name: 'Aurelia', type: 'Concept Film', date: 'Created Aug 21', status: 'Draft', color: 'aurelia', progress: 34 },
-  { name: 'Future Forms', type: 'Campaign', date: 'Created Aug 12', status: 'Ready', color: 'future', progress: 100 },
-  { name: 'Arc / 08', type: 'Motion Study', date: 'Created Aug 04', status: 'Draft', color: 'arc', progress: 18 },
-]
+type ProjectCardData = {
+  id: string
+  name: string
+  type: string
+  date: string
+  status: string
+  color: 'neon' | 'apex' | 'humanity' | 'aurelia' | 'future' | 'arc'
+}
+
+type StudioContextValue = {
+  data: StudioData | null
+  loading: boolean
+  error: string | null
+  refresh: () => Promise<void>
+}
+
+const StudioContext = createContext<StudioContextValue | null>(null)
+
+function useStudio() {
+  return useContext(StudioContext)
+}
 
 const tools = [
-  ['Video Generator', 'Turn ideas into cinematic video', Sparkles, 'violet'],
-  ['AI Video Editor', 'Edit with natural language', WandSparkles, 'blue'],
-  ['Enhance & Upscale', 'Polish every frame in 4K', Zap, 'amber'],
+  { name: 'Video Generator', description: 'Turn ideas into cinematic video', icon: Sparkles, color: 'violet', page: 'generate' as Page },
+  { name: 'AI Video Editor', description: 'Edit projects with natural language', icon: WandSparkles, color: 'blue', page: 'editor' as Page },
+  { name: 'Enhance & Upscale', description: 'Coming soon — polish every frame in 4K', icon: Zap, color: 'amber', page: null },
 ]
+
+const projectColors: ProjectCardData['color'][] = ['neon', 'apex', 'humanity', 'aurelia', 'future', 'arc']
+
+function formatCreationDate(date: string) {
+  const timestamp = new Date(date)
+  if (Number.isNaN(timestamp.getTime())) return 'Created recently'
+  return `Created ${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(timestamp)}`
+}
+
+function toProjectCard(creation: Creation, index: number): ProjectCardData {
+  return {
+    id: creation.id,
+    name: creation.title,
+    type: creation.type,
+    date: formatCreationDate(creation.created_at),
+    status: creation.status === 'completed' ? 'Ready' : creation.status,
+    color: projectColors[index % projectColors.length],
+  }
+}
 
 function Logo({ markOnly = false }: { markOnly?: boolean }) {
   return <div className="logo neon-logo"><span className="logo-mark" />{!markOnly && <span className="logo-title">CEZIK <b>AI</b><small>STUDIO</small></span>}</div>
 }
 
-function Button({ children, variant = 'primary', onClick, className = '' }: { children: ReactNode; variant?: 'primary' | 'ghost' | 'quiet'; onClick?: () => void; className?: string }) {
-  return <button onClick={onClick} className={`button ${variant} ${className}`}>{children}</button>
+function Button({ children, variant = 'primary', onClick, className = '', disabled = false }: { children: ReactNode; variant?: 'primary' | 'ghost' | 'quiet'; onClick?: () => void; className?: string; disabled?: boolean }) {
+  return <button onClick={onClick} disabled={disabled} className={`button ${variant} ${className}`}>{children}</button>
 }
 
 function TopBar({ onPage, title, compact = false }: { onPage: (p: Page) => void; title?: string; compact?: boolean }) {
@@ -62,12 +95,14 @@ function TopBar({ onPage, title, compact = false }: { onPage: (p: Page) => void;
 
 function Sidebar({ page, onPage }: { page: Page; onPage: (p: Page) => void }) {
   const [open, setOpen] = useState(true)
+  const studio = useStudio()
+  const balance = studio?.data?.balance
   const isActive = (page: Page, label: string) => (page === 'home' && label === 'Home') || (page === 'projects' && label === 'My Projects') || (page === 'generate' && label === 'AI Video Generator') || (page === 'editor' && label === 'AI Video Editor')
   return <aside className={`sidebar ${open ? '' : 'collapsed'}`}>
     <div className="side-top"><Logo markOnly={!open} /><button onClick={() => setOpen(!open)} className="collapse"><PanelLeftClose size={18} /></button></div>
     <nav>{navItems.map(({ id, label, icon: Icon }, index) => <button key={`${label}-${index}`} onClick={() => onPage(id)} className={`nav-item ${isActive(page, label) ? 'active' : ''}`}><Icon size={19} /><span>{label}</span>{label === 'AI Video Generator' && <em>NEW</em>}</button>)}</nav>
     <div className="side-bottom">
-      {open && <div className="usage-card"><span>CREATIVE CREDITS</span><strong>870 <i>/ 1,000</i></strong><div className="progress"><b style={{ width: '87%' }} /></div><button>Manage plan <ArrowRight size={13} /></button></div>}
+      {open && <div className="usage-card"><span>CEZIK CREDITS</span><strong>{studio?.loading ? '…' : balance ?? '—'} <i>available</i></strong><div className="progress"><b style={{ width: balance === undefined ? '0%' : `${Math.min(100, Math.max(4, balance / 10))}%` }} /></div><button onClick={() => onPage('generate')}>Create with credits <ArrowRight size={13} /></button></div>}
       <button className="account"><span className="avatar">AD</span>{open && <span><strong>Alex Doe</strong><small>Pro workspace</small></span>}<MoreHorizontal size={18} /></button>
     </div>
   </aside>
@@ -98,24 +133,37 @@ function Welcome({ onAuth, onExplore }: { onAuth: (mode: AuthMode) => void; onEx
 }
 
 function Dashboard({ onPage, name }: { onPage: (p: Page) => void; name: string }) {
+  const studio = useStudio()
+  const [packagesOpen, setPackagesOpen] = useState(false)
+  const projects = (studio?.data?.creations ?? []).map(toProjectCard)
   return <Shell page="home" onPage={onPage}><div className="content dashboard">
-    <section className="dashboard-hero"><div><span className="overline">THURSDAY, SEPTEMBER 4</span><h1>Good morning, {name}.</h1><p>What will you bring to life today?</p></div><Button onClick={() => onPage('generate')}><Sparkles size={17} /> Create with AI</Button></section>
-    <section className="tool-grid">{tools.map(([name, desc, Icon, color]) => <button className="tool-card" key={name as string} onClick={() => onPage(name === 'AI Video Editor' ? 'editor' : 'generate')}><span className={`tool-icon ${color}`}><Icon size={21} /></span><span><strong>{name as string}</strong><small>{desc as string}</small></span><ArrowRight size={18} /></button>)}</section>
+    <section className="dashboard-hero"><div><span className="overline">YOUR CEZIK WORKSPACE</span><h1>Good morning, {name}.</h1><p>What will you bring to life today?</p></div><Button onClick={() => onPage('generate')}><Sparkles size={17} /> Create with AI</Button></section>
+    <section className="credit-summary"><div><span className="overline">CEZIK CREDITS</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><p>{studio?.error ? 'Finish the CEZIK database setup to load your wallet.' : 'Your balance is secured and managed server-side.'}</p></div><Button variant="ghost" onClick={() => setPackagesOpen(true)}>Buy credits <ArrowRight size={15} /></Button></section>
+    <section className="tool-grid">{tools.map(({ name: toolName, description, icon: Icon, color, page }) => <button className="tool-card" key={toolName} onClick={() => page && onPage(page)} disabled={!page}><span className={`tool-icon ${color}`}><Icon size={21} /></span><span><strong>{toolName}</strong><small>{description}</small></span>{page ? <ArrowRight size={18} /> : <Clock3 size={17} />}</button>)}</section>
     <section className="section-heading"><div><h2>Continue creating</h2><p>Your recent projects</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></section>
-    <section className="project-row">{projects.slice(0, 4).map((project) => <ProjectCard key={project.name} project={project} onClick={() => onPage('editor')} />)}<button onClick={() => onPage('projects')} className="all-projects"> <FolderOpen size={22} /><span>View all projects</span><ArrowRight size={16} /></button></section>
+    <section className="project-row">{projects.length > 0 ? projects.slice(0, 4).map((project) => <ProjectCard key={project.id} project={project} onClick={() => onPage('editor')} />) : <button className="empty-projects" onClick={() => onPage('generate')}><Sparkles size={20} /><strong>Your creations will appear here</strong><small>Start with an AI video prompt when the video provider is connected.</small></button>}<button onClick={() => onPage('projects')} className="all-projects"> <FolderOpen size={22} /><span>View all creations</span><ArrowRight size={16} /></button></section>
     <section className="inspiration"><div><span className="overline">EXPLORE THE POSSIBLE</span><h2>Made to make your<br /><i>best work yet.</i></h2><Button variant="ghost" onClick={() => onPage('generate')}>Explore templates <ArrowRight size={16} /></Button></div><div className="inspiration-art"><div className="art-ball" /><div className="art-column" /><span>01<br /><b>CREATE</b></span></div></section>
+    {packagesOpen && <CreditPackages onClose={() => setPackagesOpen(false)} />}
   </div></Shell>
 }
 
-function ProjectCard({ project, onClick }: { project: typeof projects[0]; onClick: () => void }) { return <button className="project-card" onClick={onClick}><div className={`project-thumb ${project.color}`}><span className="play-circle"><Play size={15} fill="currentColor" /></span><span className="duration">00:24</span></div><div className="project-info"><div><strong>{project.name}</strong><small>{project.type}</small></div><span className="more"><MoreHorizontal size={18} /></span></div><div className="project-meta"><span>{project.date}</span><b className={project.status === 'Ready' ? 'ready' : ''}>{project.status}</b></div></button> }
+function CreditPackages({ onClose }: { onClose: () => void }) {
+  const studio = useStudio()
+  const packages = studio?.data?.packages ?? []
+  return <div className="credit-modal-backdrop" role="presentation" onClick={onClose}><section className="credit-modal" role="dialog" aria-modal="true" aria-label="Buy CEZIK credits" onClick={(event) => event.stopPropagation()}><button className="credit-modal-close" onClick={onClose} aria-label="Close credit packages"><X size={17} /></button><span className="overline">CEZIK CREDITS</span><h2>Choose your next<br /><i>creative runway.</i></h2><p>Packages are controlled securely from CEZIK’s server configuration.</p><div className="package-grid">{studio?.loading ? <div className="package-loading">Loading packages…</div> : packages.length > 0 ? packages.map((creditPackage) => <article className="package-card" key={creditPackage.id}><span>{creditPackage.name}</span><strong>{creditPackage.credits.toLocaleString()} <i>credits</i></strong><p>{creditPackage.description}</p><b>{new Intl.NumberFormat(undefined, { style: 'currency', currency: creditPackage.currency }).format(Number(creditPackage.price))}</b><Button variant="ghost" disabled>Checkout coming soon</Button></article>) : <div className="package-loading">Credit packages will appear after the database setup is complete.</div>}</div><small>Credits are added only after a verified payment webhook confirms payment.</small></section></div>
+}
+
+function ProjectCard({ project, onClick }: { project: ProjectCardData; onClick: () => void }) { return <button className="project-card" onClick={onClick}><div className={`project-thumb ${project.color}`}><span className="play-circle"><Play size={15} fill="currentColor" /></span><span className="duration">AI</span></div><div className="project-info"><div><strong>{project.name}</strong><small>{project.type}</small></div><span className="more"><MoreHorizontal size={18} /></span></div><div className="project-meta"><span>{project.date}</span><b className={project.status === 'Ready' ? 'ready' : ''}>{project.status}</b></div></button> }
 
 function Projects({ onPage }: { onPage: (p: Page) => void }) {
   const [query, setQuery] = useState('')
-  const shown = useMemo(() => projects.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())), [query])
+  const studio = useStudio()
+  const projects = useMemo(() => (studio?.data?.creations ?? []).map(toProjectCard), [studio?.data?.creations])
+  const shown = useMemo(() => projects.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())), [projects, query])
   return <Shell page="projects" onPage={onPage} title="My Projects"><div className="content projects-page">
-    <section className="page-head"><div><span className="overline">YOUR WORKSPACE</span><h1>My Projects</h1><p>All your ideas, in motion.</p></div><Button onClick={() => onPage('generate')}><Plus size={17} /> New project</Button></section>
-    <div className="project-controls"><label><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects" />{query && <button onClick={() => setQuery('')}><X size={15} /></button>}</label><Button variant="ghost"><SlidersHorizontal size={16} /> Filter</Button><Button variant="ghost">Last edited <ChevronDown size={15} /></Button></div>
-    <div className="projects-grid">{shown.map((project) => <ProjectCard key={project.name} project={project} onClick={() => onPage('editor')} />)}<button className="new-card" onClick={() => onPage('generate')}><span><Plus size={22} /></span><strong>Start a new project</strong><small>Bring your next idea to life</small></button></div>
+    <section className="page-head"><div><span className="overline">YOUR WORKSPACE</span><h1>My Creations</h1><p>Every completed CEZIK job, in one place.</p></div><Button onClick={() => onPage('generate')}><Plus size={17} /> New project</Button></section>
+    <div className="project-controls"><label><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search creations" />{query && <button onClick={() => setQuery('')}><X size={15} /></button>}</label><Button variant="ghost" disabled><SlidersHorizontal size={16} /> Filters soon</Button><Button variant="ghost" disabled>Newest first <ChevronDown size={15} /></Button></div>
+    <div className="projects-grid">{shown.map((project) => <ProjectCard key={project.id} project={project} onClick={() => onPage('editor')} />)}{shown.length === 0 && <div className="creation-empty"><Sparkles size={21} /><strong>{studio?.loading ? 'Loading your creations…' : 'No creations yet'}</strong><small>{studio?.error ? 'Run the CEZIK database migration, then refresh this page.' : 'Generated videos, images, voiceovers, and edits will live here.'}</small></div>}<button className="new-card" onClick={() => onPage('generate')}><span><Plus size={22} /></span><strong>Start a new project</strong><small>Bring your next idea to life</small></button></div>
   </div></Shell>
 }
 
@@ -123,14 +171,63 @@ const pillOptions = { style: ['Cinematic', 'Product film', 'Animation', 'Documen
 function Generator({ onPage }: { onPage: (p: Page) => void }) {
   const [prompt, setPrompt] = useState('A solitary astronaut walking through a field of tall grass on an alien planet at sunrise, cinematic, volumetric light.')
   const [selected, setSelected] = useState<Record<string, string>>({ style: 'Cinematic', ratio: '16:9', duration: '10 seconds', quality: 'High' })
-  const [generated, setGenerated] = useState(false)
+  const [feedback, setFeedback] = useState<{ type: 'error' | 'success' | 'info'; title: string; detail: string } | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const studio = useStudio()
+  const activity = studio?.data?.activity ?? null
+  const available = isActivityAvailable(activity)
+  const cost = activity?.credit_cost
+
+  const submitGeneration = async () => {
+    const cleanPrompt = prompt.trim()
+    setFeedback(null)
+    if (!cleanPrompt) {
+      setFeedback({ type: 'error', title: 'Describe your video first', detail: 'A prompt is required before a generation can begin.' })
+      return
+    }
+    if (!activity) {
+      setFeedback({ type: 'error', title: 'Pricing is unavailable', detail: 'Finish the CEZIK database setup before starting a generation.' })
+      return
+    }
+    if (!available) {
+      setFeedback({ type: 'info', title: 'Video generation is coming soon', detail: `The activity is priced at ${activity.credit_cost} credits, but no secure provider has been connected yet. No credits were used.` })
+      return
+    }
+    if (!supabase) return
+    setSubmitting(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('submit-ai-job', {
+        body: {
+          activitySlug: activity.slug,
+          idempotencyKey: crypto.randomUUID(),
+          input: {
+            prompt: cleanPrompt,
+            style: selected.style,
+            aspect_ratio: selected.ratio,
+            duration: selected.duration,
+            quality: selected.quality,
+          },
+        },
+      })
+      if (error) throw error
+      if (data?.error) throw new Error(data.error)
+      await studio?.refresh()
+      setFeedback({ type: 'success', title: 'Your video job is queued', detail: 'CEZIK is processing your request. Its live status will appear in My Creations.' })
+    } catch (error) {
+      setFeedback({ type: 'error', title: 'Your generation could not start', detail: error instanceof Error ? error.message : 'Please try again.' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   return <Shell page="generate" onPage={onPage} title="AI Video Generator"><div className="content generator">
     <section className="generator-head"><span className="overline"><Sparkles size={13} /> CEZIK GENERATE</span><h1>Turn a thought into a <i>world.</i></h1><p>Describe what you want to see. We’ll take care of the impossible details.</p></section>
-    <div className="generator-layout"><section className="prompt-column"><div className="prompt-box"><div className="prompt-top"><span><WandSparkles size={16} /> Your prompt</span><small>{prompt.length} / 2,000</small></div><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} /><div className="prompt-bottom"><button><Command size={13} /> Enhance prompt</button><button><Copy size={14} /> Paste</button></div></div>
-      <div className="ref-upload"><span><Upload size={18} /></span><div><strong>Reference media <em>Optional</em></strong><small>Upload an image or video to guide your creation.</small></div><Button variant="ghost">Upload</Button></div>
-      <div className="generation-note"><span>✦</span><p>Generations are saved as a new project. <b>Learn more</b></p></div>
-    </section><aside className="settings-card"><h3>Creation settings</h3>{Object.entries(pillOptions).map(([key, values]) => <div className="setting" key={key}><label>{key === 'ratio' ? 'Aspect ratio' : key[0].toUpperCase() + key.slice(1)}</label><div className="pills">{values.map((value) => <button onClick={() => setSelected({ ...selected, [key]: value })} key={value} className={selected[key] === value ? 'selected' : ''}>{key === 'ratio' && <i className={`ratio r-${value.replace(':', '-')}`} />}{value}</button>)}</div></div>)}<Button className="generate-button" onClick={() => setGenerated(true)}><Sparkles size={17} /> Generate video <span>18 credits</span></Button></aside></div>
-    {generated && <div className="generated-toast"><span><Sparkles size={18} /></span><div><strong>Your video is being created</strong><p>This usually takes 1–3 minutes. We’ll let you know when it’s ready.</p></div><button onClick={() => onPage('projects')}>View projects <ArrowRight size={15} /></button></div>}
+    <section className="generator-credit-bar"><span><Sparkles size={15} /> Your CEZIK Credits</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><i>{cost ? `${cost} credits per generation` : 'Loading activity pricing…'}</i></section>
+    <div className="generator-layout"><section className="prompt-column"><div className="prompt-box"><div className="prompt-top"><span><WandSparkles size={16} /> Your prompt</span><small>{prompt.length} / 2,000</small></div><textarea maxLength={2000} value={prompt} onChange={(e) => setPrompt(e.target.value)} /><div className="prompt-bottom"><button disabled><Command size={13} /> Prompt assist soon</button><button disabled><Copy size={14} /> Paste soon</button></div></div>
+      <div className="ref-upload"><span><Upload size={18} /></span><div><strong>Reference media <em>Optional</em></strong><small>Uploads will be available when the media pipeline is connected.</small></div><Button variant="ghost" disabled>Coming soon</Button></div>
+      <div className="generation-note"><span>✦</span><p>Every successful generation is saved privately to <b>My Creations</b>.</p></div>
+    </section><aside className="settings-card"><h3>Creation settings</h3>{Object.entries(pillOptions).map(([key, values]) => <div className="setting" key={key}><label>{key === 'ratio' ? 'Aspect ratio' : key[0].toUpperCase() + key.slice(1)}</label><div className="pills">{values.map((value) => <button onClick={() => setSelected({ ...selected, [key]: value })} key={value} className={selected[key] === value ? 'selected' : ''}>{key === 'ratio' && <i className={`ratio r-${value.replace(':', '-')}`} />}{value}</button>)}</div></div>)}<Button className="generate-button" onClick={submitGeneration} disabled={submitting}><Sparkles size={17} /> {submitting ? 'Starting job…' : available ? 'Generate video' : 'Video generation coming soon'} <span>{cost ? `${cost} credits` : '—'}</span></Button></aside></div>
+    {feedback && <div className={`generated-toast ${feedback.type}`}><span>{feedback.type === 'error' ? <X size={18} /> : <Sparkles size={18} />}</span><div><strong>{feedback.title}</strong><p>{feedback.detail}</p></div>{feedback.type === 'success' && <button onClick={() => onPage('projects')}>View creations <ArrowRight size={15} /></button>}</div>}
   </div></Shell>
 }
 
@@ -220,9 +317,36 @@ function App() {
   const [authMode, setAuthMode] = useState<AuthMode>('signin')
   const [session, setSession] = useState<Session | null>(null)
   const [authReady, setAuthReady] = useState(!supabase)
+  const [studioData, setStudioData] = useState<StudioData | null>(null)
+  const [studioLoading, setStudioLoading] = useState(false)
+  const [studioError, setStudioError] = useState<string | null>(null)
   const displayName = session?.user.user_metadata.full_name || session?.user.email?.split('@')[0] || 'Creator'
 
   useEffect(() => { window.scrollTo({ top: 0 }) }, [page])
+  const refreshStudio = useCallback(async () => {
+    if (!supabase || !session) return
+    setStudioLoading(true)
+    setStudioError(null)
+    try {
+      setStudioData(await loadStudioData(supabase))
+    } catch (error) {
+      setStudioData(null)
+      setStudioError(error instanceof Error ? error.message : 'Your studio data could not be loaded.')
+    } finally {
+      setStudioLoading(false)
+    }
+  }, [session])
+
+  useEffect(() => {
+    if (!session) {
+      setStudioData(null)
+      setStudioError(null)
+      setStudioLoading(false)
+      return
+    }
+    void refreshStudio()
+  }, [session, refreshStudio])
+
   useEffect(() => {
     if (!supabase) return
     let mounted = true
@@ -242,9 +366,19 @@ function App() {
     else setPage(nextPage)
   }
   if (!authReady) return <div className="auth-loading"><Logo /><span>Preparing your studio…</span></div>
-  if (page === 'welcome') return <Welcome onAuth={beginAuth} onExplore={() => navigate('editor')} />
-  if (page === 'auth') return <AuthScreen mode={authMode} onModeChange={setAuthMode} onBack={() => setPage('welcome')} onSuccess={() => setPage('home')} />
-  return page === 'home' ? <Dashboard onPage={navigate} name={displayName} /> : page === 'projects' ? <Projects onPage={navigate} /> : page === 'generate' ? <Generator onPage={navigate} /> : <Editor onPage={navigate} />
+  const studio = { data: studioData, loading: studioLoading, error: studioError, refresh: refreshStudio }
+  const screen = page === 'welcome'
+    ? <Welcome onAuth={beginAuth} onExplore={() => navigate('editor')} />
+    : page === 'auth'
+      ? <AuthScreen mode={authMode} onModeChange={setAuthMode} onBack={() => setPage('welcome')} onSuccess={() => setPage('home')} />
+      : page === 'home'
+        ? <Dashboard onPage={navigate} name={displayName} />
+        : page === 'projects'
+          ? <Projects onPage={navigate} />
+          : page === 'generate'
+            ? <Generator onPage={navigate} />
+            : <Editor onPage={navigate} />
+  return <StudioContext.Provider value={studio}>{screen}</StudioContext.Provider>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
