@@ -1,25 +1,28 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Session } from '@supabase/supabase-js'
 import {
   ArrowRight, Bell, CheckCircle2, ChevronDown, Clapperboard, Clock3, Command, Copy,
-  Download, FileVideo, FolderOpen, Grid2X2, Image, Layers3, LayoutDashboard,
+  Download, Eraser, FileImage, FileVideo, FolderOpen, Grid2X2, Image, Layers3, LayoutDashboard, Maximize2, Minimize2,
   LoaderCircle, LockKeyhole, Mail, Menu, MoreHorizontal, Music2, PanelLeftClose, Play, Plus, RefreshCw, Search, Settings,
   SlidersHorizontal, Sparkles, Upload, Video, WandSparkles, X, Zap
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { isActivityAvailable, loadStudioData, type Creation, type StudioData } from './lib/cezik'
+import { acceptedImageTypes, compressImage, convertImage, extensionByType, filenameFor, formatBytes, readImageDetails, removeBackground, resizeImage, validateImageFile, type ImageDetails, type OutputFormat } from './lib/image-processing'
 import './styles.css'
 import './neon.css'
 import './image-generator.css'
+import './native-image-tools.css'
 
-type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'generate' | 'image' | 'editor'
+type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'generate' | 'image' | 'editor' | 'background-remover' | 'image-compressor' | 'image-resizer' | 'image-converter'
 type AuthMode = 'signin' | 'signup' | 'reset'
 
 const navItems: { id: Page | null; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'home', label: 'Home', icon: LayoutDashboard },
   { id: 'projects', label: 'My Projects', icon: FolderOpen },
   { id: 'image', label: 'AI Image Generator', icon: Image },
+  { id: 'background-remover', label: 'Background Remover', icon: Eraser },
   { id: 'generate', label: 'AI Video Generator', icon: Sparkles },
   { id: 'editor', label: 'AI Video Editor', icon: Clapperboard },
   { id: null, label: 'Templates', icon: Grid2X2 },
@@ -54,6 +57,10 @@ const tools = [
   { name: 'Image Generator', description: 'Turn prompts into ready-to-use visuals', icon: Image, color: 'rose', page: 'image' as Page },
   { name: 'Video Generator', description: 'Turn ideas into cinematic video', icon: Sparkles, color: 'violet', page: 'generate' as Page },
   { name: 'AI Video Editor', description: 'Edit projects with natural language', icon: WandSparkles, color: 'blue', page: 'editor' as Page },
+  { name: 'Background Remover', description: 'Remove a portrait background privately', icon: Eraser, color: 'mint', page: 'background-remover' as Page },
+  { name: 'Image Compressor', description: 'Make JPGs and WebPs smaller locally', icon: Minimize2, color: 'cyan', page: 'image-compressor' as Page },
+  { name: 'Image Resizer', description: 'Change image dimensions in your browser', icon: Maximize2, color: 'indigo', page: 'image-resizer' as Page },
+  { name: 'Image Converter', description: 'Convert JPG, PNG, and WebP locally', icon: FileImage, color: 'orange', page: 'image-converter' as Page },
   { name: 'Enhance & Upscale', description: 'Coming soon — polish every frame in 4K', icon: Zap, color: 'amber', page: null },
 ]
 
@@ -102,7 +109,7 @@ function Sidebar({ page, onPage }: { page: Page; onPage: (p: Page) => void }) {
   const [open, setOpen] = useState(true)
   const studio = useStudio()
   const balance = studio?.data?.balance
-  const isActive = (page: Page, label: string) => (page === 'home' && label === 'Home') || (page === 'projects' && label === 'My Projects') || (page === 'image' && label === 'AI Image Generator') || (page === 'generate' && label === 'AI Video Generator') || (page === 'editor' && label === 'AI Video Editor')
+  const isActive = (page: Page, label: string) => (page === 'home' && label === 'Home') || (page === 'projects' && label === 'My Projects') || (page === 'image' && label === 'AI Image Generator') || (page === 'background-remover' && label === 'Background Remover') || (page === 'generate' && label === 'AI Video Generator') || (page === 'editor' && label === 'AI Video Editor')
   return <aside className={`sidebar ${open ? '' : 'collapsed'}`}>
     <div className="side-top"><Logo markOnly={!open} /><button onClick={() => setOpen(!open)} className="collapse"><PanelLeftClose size={18} /></button></div>
     <nav>{navItems.map(({ id, label, icon: Icon }, index) => <button key={`${label}-${index}`} onClick={() => id && onPage(id)} disabled={!id} className={`nav-item ${isActive(page, label) ? 'active' : ''}`}><Icon size={19} /><span>{label}</span>{label === 'AI Video Generator' ? <em>NEW</em> : !id && <em>SOON</em>}</button>)}</nav>
@@ -319,6 +326,131 @@ function ImageGenerator({ onPage }: { onPage: (p: Page) => void }) {
   </div></Shell>
 }
 
+type NativeToolKind = 'background-remover' | 'image-compressor' | 'image-resizer' | 'image-converter'
+
+const nativeToolCopy: Record<NativeToolKind, { title: string; accent: string; description: string; icon: typeof Image }> = {
+  'background-remover': { title: 'Remove the background.', accent: 'Keep the subject.', description: 'Made for portraits. The open-source model runs in your browser and makes a transparent PNG.', icon: Eraser },
+  'image-compressor': { title: 'Make the file lighter.', accent: 'Keep the look.', description: 'Create a smaller JPG or WebP without uploading your image anywhere.', icon: Minimize2 },
+  'image-resizer': { title: 'Resize with control.', accent: 'Keep it sharp.', description: 'Set exact dimensions and export the result directly from your browser.', icon: Maximize2 },
+  'image-converter': { title: 'Convert simply.', accent: 'Keep creating.', description: 'Turn a JPG, PNG, or WebP into the format you need, right here in CEZIK.', icon: FileImage },
+}
+
+function NativeImageTool({ kind, onPage }: { kind: NativeToolKind; onPage: (p: Page) => void }) {
+  const copy = nativeToolCopy[kind]
+  const Icon = copy.icon
+  const [file, setFile] = useState<File | null>(null)
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null)
+  const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const [sourceDetails, setSourceDetails] = useState<ImageDetails | null>(null)
+  const [resultDetails, setResultDetails] = useState<ImageDetails | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [working, setWorking] = useState(false)
+  const [workLabel, setWorkLabel] = useState('Processing image…')
+  const [quality, setQuality] = useState(0.75)
+  const [format, setFormat] = useState<OutputFormat>('image/png')
+  const [width, setWidth] = useState(1200)
+  const [height, setHeight] = useState(1200)
+  const [lockedRatio, setLockedRatio] = useState(true)
+  const sourceRef = useRef<string | null>(null)
+  const resultRef = useRef<string | null>(null)
+
+  useEffect(() => () => {
+    if (sourceRef.current) URL.revokeObjectURL(sourceRef.current)
+    if (resultRef.current) URL.revokeObjectURL(resultRef.current)
+  }, [])
+
+  const chooseFile = async (chosen: File | undefined) => {
+    if (!chosen) return
+    setError(null)
+    const fileError = validateImageFile(chosen)
+    if (fileError) { setError(fileError); return }
+    try {
+      const details = await readImageDetails(chosen)
+      if (sourceRef.current) URL.revokeObjectURL(sourceRef.current)
+      if (resultRef.current) URL.revokeObjectURL(resultRef.current)
+      const nextUrl = URL.createObjectURL(chosen)
+      sourceRef.current = nextUrl
+      resultRef.current = null
+      setFile(chosen)
+      setSourceUrl(nextUrl)
+      setResultUrl(null)
+      setSourceDetails(details)
+      setResultDetails(null)
+      setWidth(details.width)
+      setHeight(details.height)
+    } catch (selectionError) {
+      setError(selectionError instanceof Error ? selectionError.message : 'This image could not be opened.')
+    }
+  }
+
+  const changeWidth = (next: number) => {
+    setWidth(next)
+    if (lockedRatio && sourceDetails && next > 0) setHeight(Math.max(1, Math.round(next * sourceDetails.height / sourceDetails.width)))
+  }
+
+  const changeHeight = (next: number) => {
+    setHeight(next)
+    if (lockedRatio && sourceDetails && next > 0) setWidth(Math.max(1, Math.round(next * sourceDetails.width / sourceDetails.height)))
+  }
+
+  const processImage = async () => {
+    if (!file) return
+    setError(null)
+    setWorking(true)
+    setWorkLabel(kind === 'background-remover' ? 'Preparing background remover…' : 'Processing image…')
+    try {
+      const output = kind === 'background-remover'
+        ? await removeBackground(file, (percent) => setWorkLabel(percent < 100 ? `Downloading private model… ${Math.round(percent)}%` : 'Removing background…'))
+        : kind === 'image-compressor'
+          ? await compressImage(file, format === 'image/png' ? 'image/webp' : format, quality)
+          : kind === 'image-resizer'
+            ? await resizeImage(file, width, height, format)
+            : await convertImage(file, format)
+      if (resultRef.current) URL.revokeObjectURL(resultRef.current)
+      const nextUrl = URL.createObjectURL(output)
+      resultRef.current = nextUrl
+      setResultUrl(nextUrl)
+      setResultDetails(await readImageDetails(output))
+    } catch (processingError) {
+      setError(processingError instanceof Error ? processingError.message : 'The image could not be processed. Please try another image.')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  const downloadResult = () => {
+    if (!file || !resultUrl) return
+    const outputType = kind === 'background-remover' ? 'image/png' : kind === 'image-compressor' && format === 'image/png' ? 'image/webp' : format
+    const anchor = document.createElement('a')
+    anchor.href = resultUrl
+    anchor.download = filenameFor(file, extensionByType[outputType])
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  }
+
+  const outputLabel = kind === 'background-remover' ? 'Remove background' : kind === 'image-compressor' ? 'Compress image' : kind === 'image-resizer' ? 'Resize image' : 'Convert image'
+  const acceptedFormats = acceptedImageTypes.join(',')
+  return <Shell page={kind} onPage={onPage} title={copy.title.replace('.', '')}><div className="content native-tool-page">
+    <section className="native-tool-head"><span className="overline"><Icon size={13} /> CEZIK NATIVE TOOLS</span><h1>{copy.title} <i>{copy.accent}</i></h1><p>{copy.description}</p></section>
+    <div className="native-private-note"><LockKeyhole size={16} /><span><strong>Private by default.</strong> Your image stays on this device. Nothing is sent to CEZIK storage and no credits are used.</span></div>
+    <section className="native-tool-layout">
+      <div className="native-workspace">
+        <label className={`native-upload ${file ? 'has-file' : ''}`}><input type="file" accept={acceptedFormats} onChange={(event) => void chooseFile(event.target.files?.[0])} /><Upload size={22} /><strong>{file ? 'Choose a different image' : 'Choose an image'}</strong><small>JPG, PNG, or WebP · up to 12 MB</small></label>
+        {error && <div className="native-error"><X size={17} /><span>{error}</span></div>}
+        {sourceUrl && <div className="native-preview-grid"><article><div className="native-preview-label">Before</div><div className="native-image-frame"><img src={sourceUrl} alt="Original upload" /></div><small>{sourceDetails && `${sourceDetails.width} × ${sourceDetails.height} · ${formatBytes(sourceDetails.bytes)}`}</small></article><article className="native-result"><div className="native-preview-label">After</div><div className="native-image-frame checkerboard">{resultUrl ? <img src={resultUrl} alt="Processed result" /> : <span>{working ? workLabel : 'Your result will appear here'}</span>}</div><small>{resultDetails ? `${resultDetails.width} × ${resultDetails.height} · ${formatBytes(resultDetails.bytes)}` : 'Not uploaded or saved automatically'}</small>{resultUrl && <Button variant="ghost" onClick={downloadResult}><Download size={15} /> Download result</Button>}</article></div>}
+      </div>
+      <aside className="native-settings-card"><h3>{kind === 'background-remover' ? 'Portrait processing' : 'Export settings'}</h3>
+        {kind === 'background-remover' && <p className="setting-note">The first run downloads the MODNet model to this browser. It is best for people and portrait-style photos. The result is always a transparent PNG.</p>}
+        {kind === 'image-compressor' && <><div className="setting"><label>Output format</label><div className="pills"><button className={format === 'image/jpeg' ? 'selected' : ''} onClick={() => setFormat('image/jpeg')}>JPG</button><button className={format === 'image/webp' ? 'selected' : ''} onClick={() => setFormat('image/webp')}>WebP</button></div></div><div className="setting"><label>Quality <b>{Math.round(quality * 100)}%</b></label><input className="native-range" type="range" min="0.35" max="0.95" step="0.05" value={quality} onChange={(event) => setQuality(Number(event.target.value))} /><small>Lower is smaller; higher keeps more detail.</small></div></>}
+        {kind === 'image-resizer' && <><div className="native-size-fields"><label>Width<input type="number" min="1" max="6000" value={width} onChange={(event) => changeWidth(Number(event.target.value))} /></label><span>×</span><label>Height<input type="number" min="1" max="6000" value={height} onChange={(event) => changeHeight(Number(event.target.value))} /></label></div><label className="native-check"><input type="checkbox" checked={lockedRatio} onChange={(event) => setLockedRatio(event.target.checked)} /> Keep proportions</label><div className="setting"><label>Output format</label><select value={format} onChange={(event) => setFormat(event.target.value as OutputFormat)}><option value="image/png">PNG</option><option value="image/jpeg">JPG</option><option value="image/webp">WebP</option></select></div></>}
+        {kind === 'image-converter' && <div className="setting"><label>Convert to</label><select value={format} onChange={(event) => setFormat(event.target.value as OutputFormat)}><option value="image/png">PNG — supports transparency</option><option value="image/jpeg">JPG — small photo file</option><option value="image/webp">WebP — modern compact file</option></select></div>}
+        <Button className="generate-button native-process-button" onClick={processImage} disabled={!file || working}><Icon size={17} /> {working ? workLabel : outputLabel}</Button>
+      </aside>
+    </section>
+  </div></Shell>
+}
+
 function Editor({ onPage }: { onPage: (p: Page) => void }) {
   const [playing, setPlaying] = useState(false); const [activeTool, setActiveTool] = useState('AI edit')
   const aiTools = [['AI edit', WandSparkles], ['Remove background', Layers3], ['Extend video', ArrowRight], ['AI voiceover', Music2], ['Generate subtitles', FileVideo], ['Improve quality', Zap], ['Add music', Music2], ['AI effects', Sparkles]] as const
@@ -467,7 +599,9 @@ function App() {
           ? <Generator onPage={navigate} />
           : page === 'image'
             ? <ImageGenerator onPage={navigate} />
-            : <Editor onPage={navigate} />
+            : page === 'background-remover' || page === 'image-compressor' || page === 'image-resizer' || page === 'image-converter'
+              ? <NativeImageTool kind={page} onPage={navigate} />
+              : <Editor onPage={navigate} />
   return <StudioContext.Provider value={studio}>{screen}</StudioContext.Provider>
 }
 
