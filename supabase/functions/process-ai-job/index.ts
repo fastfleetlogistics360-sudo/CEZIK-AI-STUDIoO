@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { resolveImageGenerationProvider, type ImageSize } from '../_shared/image-providers.ts'
 
 type WorkerRequest = { jobId?: string }
 
@@ -20,7 +21,13 @@ Deno.serve(async (request) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   if (!url || !serviceRoleKey) return json({ error: 'Server configuration is incomplete' }, 500)
 
-  const { jobId }: WorkerRequest = await request.json()
+  let payload: WorkerRequest
+  try {
+    payload = await request.json()
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400)
+  }
+  const { jobId } = payload
   if (!jobId) return json({ error: 'jobId is required' }, 400)
 
   const admin = createClient(url, serviceRoleKey, { auth: { persistSession: false } })
@@ -32,20 +39,67 @@ Deno.serve(async (request) => {
   if (error || !job) return json({ error: 'Job not found' }, 404)
   if (job.status !== 'queued') return json({ job, message: 'Job has already been handled' })
 
-  await admin.from('ai_jobs').update({
+  const { data: claimedJobs, error: processingError } = await admin.from('ai_jobs').update({
     status: 'processing',
     started_at: new Date().toISOString(),
-  }).eq('id', job.id)
+  }).eq('id', job.id).eq('status', 'queued').select('id')
+  if (processingError) return json({ error: 'Could not start generation' }, 500)
+  if (!claimedJobs?.length) return json({ job: { ...job, status: 'processing' }, message: 'Job is already being processed' }, 202)
 
-  // Provider adapters belong here. Keep API keys in Edge Function secrets and
-  // route by job.provider; never put a provider key or price in the client.
-  // Until a real provider is configured, fail and refund rather than producing
-  // a fake paid result.
-  await admin.rpc('fail_ai_job', {
-    p_job_id: job.id,
-    p_error_message: 'No video provider has been configured for this activity.',
-    p_refund: true,
-  })
-  return json({ jobId: job.id, status: 'failed_refunded' })
+  const apiKey = Deno.env.get('OPENAI_API_KEY')
+  const imageProvider = resolveImageGenerationProvider(job.provider, { openAiApiKey: apiKey })
+  if (job.ai_activities?.slug !== 'image-generation' || !imageProvider) {
+    await admin.rpc('fail_ai_job', {
+      p_job_id: job.id,
+      p_error_message: 'No provider adapter has been configured for this activity.',
+      p_refund: true,
+    })
+    return json({ error: 'This generation provider is not configured. No credits were used.' }, 503)
+  }
+
+  const prompt = typeof job.input_data?.prompt === 'string' ? job.input_data.prompt.trim() : ''
+  const requestedSize = typeof job.input_data?.size === 'string' ? job.input_data.size : '1024x1024'
+  const size: ImageSize = ['1024x1024', '1536x1024', '1024x1536'].includes(requestedSize) ? requestedSize as ImageSize : '1024x1024'
+  if (!prompt || prompt.length > 2000) {
+    await admin.rpc('fail_ai_job', {
+      p_job_id: job.id,
+      p_error_message: 'Invalid image-generation input.',
+      p_refund: true,
+    })
+    return json({ error: 'Invalid image prompt. No credits were used.' }, 503)
+  }
+
+  try {
+    const result = await imageProvider.generate({
+      prompt,
+      size,
+      outputFormat: 'png',
+      jobId: job.id,
+      userId: job.user_id,
+    })
+    const storagePath = `${job.user_id}/${job.id}/image.${result.extension}`
+    const { error: storageError } = await admin.storage.from('cezik-creations').upload(storagePath, result.bytes, {
+      contentType: result.contentType,
+      upsert: false,
+    })
+    if (storageError) throw new Error('The generated image could not be saved.')
+
+    const { data: creation, error: completionError } = await admin.rpc('complete_ai_job', {
+      p_job_id: job.id,
+      p_output_data: result.metadata,
+      p_title: prompt.length > 72 ? `${prompt.slice(0, 69)}…` : prompt,
+      p_creation_type: 'image',
+      p_storage_path: storagePath,
+      p_preview_path: storagePath,
+    })
+    if (completionError) throw new Error('The generated image could not be recorded.')
+    return json({ job: { ...job, status: 'completed' }, creation })
+  } catch (error) {
+    await admin.rpc('fail_ai_job', {
+      p_job_id: job.id,
+      p_error_message: error instanceof Error ? error.message : 'Image generation failed.',
+      p_refund: true,
+    })
+    return json({ error: 'Image generation failed. Your credits were refunded.' }, 502)
+  }
 })
-

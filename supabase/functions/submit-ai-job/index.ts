@@ -38,8 +38,8 @@ Deno.serve(async (request) => {
   }
 
   const prompt = typeof payload.input?.prompt === 'string' ? payload.input.prompt.trim() : ''
-  if (payload.activitySlug !== 'video-generation' || !prompt || prompt.length > 2000) {
-    return json({ error: 'Provide a valid video prompt of up to 2,000 characters' }, 400)
+  if (!['video-generation', 'image-generation'].includes(payload.activitySlug ?? '') || !prompt || prompt.length > 2000) {
+    return json({ error: 'Provide a valid generation prompt of up to 2,000 characters' }, 400)
   }
   if (!payload.idempotencyKey || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.idempotencyKey)) {
     return json({ error: 'A valid idempotency key is required' }, 400)
@@ -60,8 +60,36 @@ Deno.serve(async (request) => {
     return json({ error: message }, 400)
   }
 
-  // A trusted worker or provider webhook owns the next transition. The browser
-  // only receives the queued job and can safely poll its own job record.
-  return json({ job }, 202)
-})
+  // The browser never receives the worker secret. Calling the trusted worker
+  // here makes synchronous image providers usable tonight; a queue or provider
+  // webhook can use this same worker for longer-running activities later.
+  const workerSecret = Deno.env.get('CEZIK_WORKER_SECRET')
+  if (!workerSecret) {
+    await admin.rpc('fail_ai_job', {
+      p_job_id: job.id,
+      p_error_message: 'The generation worker is not configured.',
+      p_refund: true,
+    })
+    return json({ error: 'Generation is not configured yet. No credits were used.' }, 503)
+  }
 
+  try {
+    const workerResponse = await fetch(`${url}/functions/v1/process-ai-job`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-cezik-worker-secret': workerSecret },
+      body: JSON.stringify({ jobId: job.id }),
+    })
+    const workerResult = await workerResponse.json().catch(() => null)
+    if (!workerResponse.ok || workerResult?.error) {
+      return json({ error: workerResult?.error ?? 'Generation could not be processed. Your credits were refunded if applicable.' }, 502)
+    }
+    return json({ job: workerResult.job ?? job, creation: workerResult.creation ?? null }, 200)
+  } catch {
+    await admin.rpc('fail_ai_job', {
+      p_job_id: job.id,
+      p_error_message: 'The generation worker could not be reached.',
+      p_refund: true,
+    })
+    return json({ error: 'Generation could not be processed. No credits were used.' }, 502)
+  }
+})

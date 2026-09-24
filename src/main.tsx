@@ -4,25 +4,27 @@ import type { Session } from '@supabase/supabase-js'
 import {
   ArrowRight, Bell, CheckCircle2, ChevronDown, Clapperboard, Clock3, Command, Copy,
   Download, FileVideo, FolderOpen, Grid2X2, Image, Layers3, LayoutDashboard,
-  LoaderCircle, LockKeyhole, Mail, Menu, MoreHorizontal, Music2, PanelLeftClose, Play, Plus, Search, Settings,
+  LoaderCircle, LockKeyhole, Mail, Menu, MoreHorizontal, Music2, PanelLeftClose, Play, Plus, RefreshCw, Search, Settings,
   SlidersHorizontal, Sparkles, Upload, Video, WandSparkles, X, Zap
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { isActivityAvailable, loadStudioData, type Creation, type StudioData } from './lib/cezik'
 import './styles.css'
 import './neon.css'
+import './image-generator.css'
 
-type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'generate' | 'editor'
+type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'generate' | 'image' | 'editor'
 type AuthMode = 'signin' | 'signup' | 'reset'
 
-const navItems: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
+const navItems: { id: Page | null; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'home', label: 'Home', icon: LayoutDashboard },
   { id: 'projects', label: 'My Projects', icon: FolderOpen },
+  { id: 'image', label: 'AI Image Generator', icon: Image },
   { id: 'generate', label: 'AI Video Generator', icon: Sparkles },
   { id: 'editor', label: 'AI Video Editor', icon: Clapperboard },
-  { id: 'projects', label: 'Templates', icon: Grid2X2 },
-  { id: 'projects', label: 'Assets', icon: Image },
-  { id: 'home', label: 'Settings', icon: Settings },
+  { id: null, label: 'Templates', icon: Grid2X2 },
+  { id: null, label: 'Assets', icon: Image },
+  { id: null, label: 'Settings', icon: Settings },
 ]
 
 type ProjectCardData = {
@@ -32,6 +34,7 @@ type ProjectCardData = {
   date: string
   status: string
   color: 'neon' | 'apex' | 'humanity' | 'aurelia' | 'future' | 'arc'
+  assetUrl: string | null
 }
 
 type StudioContextValue = {
@@ -48,6 +51,7 @@ function useStudio() {
 }
 
 const tools = [
+  { name: 'Image Generator', description: 'Turn prompts into ready-to-use visuals', icon: Image, color: 'rose', page: 'image' as Page },
   { name: 'Video Generator', description: 'Turn ideas into cinematic video', icon: Sparkles, color: 'violet', page: 'generate' as Page },
   { name: 'AI Video Editor', description: 'Edit projects with natural language', icon: WandSparkles, color: 'blue', page: 'editor' as Page },
   { name: 'Enhance & Upscale', description: 'Coming soon — polish every frame in 4K', icon: Zap, color: 'amber', page: null },
@@ -69,6 +73,7 @@ function toProjectCard(creation: Creation, index: number): ProjectCardData {
     date: formatCreationDate(creation.created_at),
     status: creation.status === 'completed' ? 'Ready' : creation.status,
     color: projectColors[index % projectColors.length],
+    assetUrl: creation.assetUrl,
   }
 }
 
@@ -88,7 +93,7 @@ function TopBar({ onPage, title, compact = false }: { onPage: (p: Page) => void;
       {!compact && <button className="icon-button"><Search size={19} /></button>}
       <button className="icon-button notification"><Bell size={18} /><b /></button>
       <button className="profile"><span>AD</span><ChevronDown size={15} /></button>
-      {!compact && <Button onClick={() => onPage('generate')}><Plus size={17} /> Create</Button>}
+      {!compact && <Button onClick={() => onPage('image')}><Plus size={17} /> Create</Button>}
     </div>
   </header>
 }
@@ -97,12 +102,12 @@ function Sidebar({ page, onPage }: { page: Page; onPage: (p: Page) => void }) {
   const [open, setOpen] = useState(true)
   const studio = useStudio()
   const balance = studio?.data?.balance
-  const isActive = (page: Page, label: string) => (page === 'home' && label === 'Home') || (page === 'projects' && label === 'My Projects') || (page === 'generate' && label === 'AI Video Generator') || (page === 'editor' && label === 'AI Video Editor')
+  const isActive = (page: Page, label: string) => (page === 'home' && label === 'Home') || (page === 'projects' && label === 'My Projects') || (page === 'image' && label === 'AI Image Generator') || (page === 'generate' && label === 'AI Video Generator') || (page === 'editor' && label === 'AI Video Editor')
   return <aside className={`sidebar ${open ? '' : 'collapsed'}`}>
     <div className="side-top"><Logo markOnly={!open} /><button onClick={() => setOpen(!open)} className="collapse"><PanelLeftClose size={18} /></button></div>
-    <nav>{navItems.map(({ id, label, icon: Icon }, index) => <button key={`${label}-${index}`} onClick={() => onPage(id)} className={`nav-item ${isActive(page, label) ? 'active' : ''}`}><Icon size={19} /><span>{label}</span>{label === 'AI Video Generator' && <em>NEW</em>}</button>)}</nav>
+    <nav>{navItems.map(({ id, label, icon: Icon }, index) => <button key={`${label}-${index}`} onClick={() => id && onPage(id)} disabled={!id} className={`nav-item ${isActive(page, label) ? 'active' : ''}`}><Icon size={19} /><span>{label}</span>{label === 'AI Video Generator' ? <em>NEW</em> : !id && <em>SOON</em>}</button>)}</nav>
     <div className="side-bottom">
-      {open && <div className="usage-card"><span>CEZIK CREDITS</span><strong>{studio?.loading ? '…' : balance ?? '—'} <i>available</i></strong><div className="progress"><b style={{ width: balance === undefined ? '0%' : `${Math.min(100, Math.max(4, balance / 10))}%` }} /></div><button onClick={() => onPage('generate')}>Create with credits <ArrowRight size={13} /></button></div>}
+      {open && <div className="usage-card"><span>CEZIK CREDITS</span><strong>{studio?.loading ? '…' : balance ?? '—'} <i>available</i></strong><div className="progress"><b style={{ width: balance === undefined ? '0%' : `${Math.min(100, Math.max(4, balance / 10))}%` }} /></div><button onClick={() => onPage('image')}>Create with credits <ArrowRight size={13} /></button></div>}
       <button className="account"><span className="avatar">AD</span>{open && <span><strong>Alex Doe</strong><small>Pro workspace</small></span>}<MoreHorizontal size={18} /></button>
     </div>
   </aside>
@@ -137,11 +142,11 @@ function Dashboard({ onPage, name }: { onPage: (p: Page) => void; name: string }
   const [packagesOpen, setPackagesOpen] = useState(false)
   const projects = (studio?.data?.creations ?? []).map(toProjectCard)
   return <Shell page="home" onPage={onPage}><div className="content dashboard">
-    <section className="dashboard-hero"><div><span className="overline">YOUR CEZIK WORKSPACE</span><h1>Good morning, {name}.</h1><p>What will you bring to life today?</p></div><Button onClick={() => onPage('generate')}><Sparkles size={17} /> Create with AI</Button></section>
+    <section className="dashboard-hero"><div><span className="overline">YOUR CEZIK WORKSPACE</span><h1>Good morning, {name}.</h1><p>What will you bring to life today?</p></div><Button onClick={() => onPage('image')}><Sparkles size={17} /> Create with AI</Button></section>
     <section className="credit-summary"><div><span className="overline">CEZIK CREDITS</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><p>{studio?.error ? 'Finish the CEZIK database setup to load your wallet.' : 'Your balance is secured and managed server-side.'}</p></div><Button variant="ghost" onClick={() => setPackagesOpen(true)}>Buy credits <ArrowRight size={15} /></Button></section>
     <section className="tool-grid">{tools.map(({ name: toolName, description, icon: Icon, color, page }) => <button className="tool-card" key={toolName} onClick={() => page && onPage(page)} disabled={!page}><span className={`tool-icon ${color}`}><Icon size={21} /></span><span><strong>{toolName}</strong><small>{description}</small></span>{page ? <ArrowRight size={18} /> : <Clock3 size={17} />}</button>)}</section>
     <section className="section-heading"><div><h2>Continue creating</h2><p>Your recent projects</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></section>
-    <section className="project-row">{projects.length > 0 ? projects.slice(0, 4).map((project) => <ProjectCard key={project.id} project={project} onClick={() => onPage('editor')} />) : <button className="empty-projects" onClick={() => onPage('generate')}><Sparkles size={20} /><strong>Your creations will appear here</strong><small>Start with an AI video prompt when the video provider is connected.</small></button>}<button onClick={() => onPage('projects')} className="all-projects"> <FolderOpen size={22} /><span>View all creations</span><ArrowRight size={16} /></button></section>
+    <section className="project-row">{projects.length > 0 ? projects.slice(0, 4).map((project) => <ProjectCard key={project.id} project={project} onClick={() => onPage('editor')} />) : <button className="empty-projects" onClick={() => onPage('image')}><Image size={20} /><strong>Your creations will appear here</strong><small>Start with an AI image prompt once the provider is activated.</small></button>}<button onClick={() => onPage('projects')} className="all-projects"> <FolderOpen size={22} /><span>View all creations</span><ArrowRight size={16} /></button></section>
     <section className="inspiration"><div><span className="overline">EXPLORE THE POSSIBLE</span><h2>Made to make your<br /><i>best work yet.</i></h2><Button variant="ghost" onClick={() => onPage('generate')}>Explore templates <ArrowRight size={16} /></Button></div><div className="inspiration-art"><div className="art-ball" /><div className="art-column" /><span>01<br /><b>CREATE</b></span></div></section>
     {packagesOpen && <CreditPackages onClose={() => setPackagesOpen(false)} />}
   </div></Shell>
@@ -153,7 +158,7 @@ function CreditPackages({ onClose }: { onClose: () => void }) {
   return <div className="credit-modal-backdrop" role="presentation" onClick={onClose}><section className="credit-modal" role="dialog" aria-modal="true" aria-label="Buy CEZIK credits" onClick={(event) => event.stopPropagation()}><button className="credit-modal-close" onClick={onClose} aria-label="Close credit packages"><X size={17} /></button><span className="overline">CEZIK CREDITS</span><h2>Choose your next<br /><i>creative runway.</i></h2><p>Packages are controlled securely from CEZIK’s server configuration.</p><div className="package-grid">{studio?.loading ? <div className="package-loading">Loading packages…</div> : packages.length > 0 ? packages.map((creditPackage) => <article className="package-card" key={creditPackage.id}><span>{creditPackage.name}</span><strong>{creditPackage.credits.toLocaleString()} <i>credits</i></strong><p>{creditPackage.description}</p><b>{new Intl.NumberFormat(undefined, { style: 'currency', currency: creditPackage.currency }).format(Number(creditPackage.price))}</b><Button variant="ghost" disabled>Checkout coming soon</Button></article>) : <div className="package-loading">Credit packages will appear after the database setup is complete.</div>}</div><small>Credits are added only after a verified payment webhook confirms payment.</small></section></div>
 }
 
-function ProjectCard({ project, onClick }: { project: ProjectCardData; onClick: () => void }) { return <button className="project-card" onClick={onClick}><div className={`project-thumb ${project.color}`}><span className="play-circle"><Play size={15} fill="currentColor" /></span><span className="duration">AI</span></div><div className="project-info"><div><strong>{project.name}</strong><small>{project.type}</small></div><span className="more"><MoreHorizontal size={18} /></span></div><div className="project-meta"><span>{project.date}</span><b className={project.status === 'Ready' ? 'ready' : ''}>{project.status}</b></div></button> }
+function ProjectCard({ project, onClick }: { project: ProjectCardData; onClick: () => void }) { return <button className="project-card" onClick={onClick}><div className={`project-thumb ${project.color}`}>{project.assetUrl && <img src={project.assetUrl} alt="" />}<span className="play-circle">{project.type === 'image' ? <Image size={15} /> : <Play size={15} fill="currentColor" />}</span><span className="duration">AI</span></div><div className="project-info"><div><strong>{project.name}</strong><small>{project.type}</small></div><span className="more"><MoreHorizontal size={18} /></span></div><div className="project-meta"><span>{project.date}</span><b className={project.status === 'Ready' ? 'ready' : ''}>{project.status}</b></div></button> }
 
 function Projects({ onPage }: { onPage: (p: Page) => void }) {
   const [query, setQuery] = useState('')
@@ -228,6 +233,89 @@ function Generator({ onPage }: { onPage: (p: Page) => void }) {
       <div className="generation-note"><span>✦</span><p>Every successful generation is saved privately to <b>My Creations</b>.</p></div>
     </section><aside className="settings-card"><h3>Creation settings</h3>{Object.entries(pillOptions).map(([key, values]) => <div className="setting" key={key}><label>{key === 'ratio' ? 'Aspect ratio' : key[0].toUpperCase() + key.slice(1)}</label><div className="pills">{values.map((value) => <button onClick={() => setSelected({ ...selected, [key]: value })} key={value} className={selected[key] === value ? 'selected' : ''}>{key === 'ratio' && <i className={`ratio r-${value.replace(':', '-')}`} />}{value}</button>)}</div></div>)}<Button className="generate-button" onClick={submitGeneration} disabled={submitting}><Sparkles size={17} /> {submitting ? 'Starting job…' : available ? 'Generate video' : 'Video generation coming soon'} <span>{cost ? `${cost} credits` : '—'}</span></Button></aside></div>
     {feedback && <div className={`generated-toast ${feedback.type}`}><span>{feedback.type === 'error' ? <X size={18} /> : <Sparkles size={18} />}</span><div><strong>{feedback.title}</strong><p>{feedback.detail}</p></div>{feedback.type === 'success' && <button onClick={() => onPage('projects')}>View creations <ArrowRight size={15} /></button>}</div>}
+  </div></Shell>
+}
+
+const imageSizes = [
+  { label: 'Square', value: '1024x1024', className: 'r-1-1' },
+  { label: 'Landscape', value: '1536x1024', className: 'r-16-9' },
+  { label: 'Portrait', value: '1024x1536', className: 'r-9-16' },
+]
+
+function ImageGenerator({ onPage }: { onPage: (p: Page) => void }) {
+  const [prompt, setPrompt] = useState('A luminous glass pavilion emerging from a misty tropical forest at dawn, editorial architecture photography, soft cinematic light.')
+  const [size, setSize] = useState('1024x1024')
+  const [submitting, setSubmitting] = useState(false)
+  const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState<{ type: 'error' | 'success' | 'info'; title: string; detail: string } | null>(null)
+  const studio = useStudio()
+  const activity = studio?.data?.imageActivity ?? null
+  const available = isActivityAvailable(activity)
+  const cost = activity?.credit_cost
+  const imageHistory = (studio?.data?.creations ?? []).filter((creation) => creation.type === 'image')
+
+  const downloadImage = async (url: string, filename: string) => {
+    try {
+      const response = await fetch(url)
+      if (!response.ok) throw new Error('Download unavailable')
+      const objectUrl = URL.createObjectURL(await response.blob())
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }
+
+  const generateImage = async () => {
+    const cleanPrompt = prompt.trim()
+    setFeedback(null)
+    if (!cleanPrompt) {
+      setFeedback({ type: 'error', title: 'Describe the image first', detail: 'A prompt is required before a generation can begin.' })
+      return
+    }
+    if (!activity) {
+      setFeedback({ type: 'error', title: 'Image pricing is unavailable', detail: 'Run the image-generation database migration before starting a generation.' })
+      return
+    }
+    if (!available) {
+      setFeedback({ type: 'info', title: 'Image generation is not activated yet', detail: `The activity is priced at ${activity.credit_cost} credits. Add the provider secret and activate the database activity; no credits were used.` })
+      return
+    }
+    if (!supabase) return
+    setSubmitting(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('submit-ai-job', {
+        body: { activitySlug: activity.slug, idempotencyKey: crypto.randomUUID(), input: { prompt: cleanPrompt, size } },
+      })
+      if (error) throw error
+      if (data?.error) throw new Error(data.error)
+      const storagePath = data?.creation?.storage_path as string | undefined
+      if (!storagePath) throw new Error('The image was created but its private asset could not be located.')
+      const { data: signedAsset, error: signedAssetError } = await supabase.storage.from('cezik-creations').createSignedUrl(storagePath, 60 * 60)
+      if (signedAssetError || !signedAsset?.signedUrl) throw new Error('The image was created but could not be opened.')
+      setResultUrl(signedAsset.signedUrl)
+      await studio?.refresh()
+      setFeedback({ type: 'success', title: 'Your image is ready', detail: 'It is saved privately to My Creations and your credit balance has been updated.' })
+    } catch (error) {
+      setFeedback({ type: 'error', title: 'Your image could not be generated', detail: error instanceof Error ? error.message : 'Please try again. Any failed generation is refunded automatically.' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return <Shell page="image" onPage={onPage} title="AI Image Generator"><div className="content generator image-generator">
+    <section className="generator-head"><span className="overline"><Image size={13} /> CEZIK IMAGES</span><h1>Make the imagined <i>visible.</i></h1><p>Describe the visual, choose a composition, and create a private, downloadable image.</p></section>
+    <section className="generator-credit-bar"><span><Sparkles size={15} /> Your CEZIK Credits</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><i>{cost ? `${cost} credits per image` : 'Run the image migration to load pricing'}</i></section>
+    <div className="generator-layout"><section className="prompt-column"><div className="prompt-box"><div className="prompt-top"><span><WandSparkles size={16} /> Your prompt</span><small>{prompt.length} / 2,000</small></div><textarea maxLength={2000} value={prompt} onChange={(event) => setPrompt(event.target.value)} /><div className="prompt-bottom"><span>Images are generated securely and stored in your private workspace.</span></div></div>
+      {resultUrl ? <section className="image-result"><div className="image-result-head"><span><CheckCircle2 size={16} /> Latest generation</span><div><Button variant="ghost" onClick={() => void downloadImage(resultUrl, 'cezik-image.png')}><Download size={15} /> Download</Button><Button variant="ghost" onClick={generateImage} disabled={submitting}><RefreshCw size={15} /> Regenerate</Button></div></div><img src={resultUrl} alt={prompt} /></section> : <div className="generation-note"><span>✦</span><p>Your completed images are saved privately to <b>My Creations</b>.</p></div>}
+    </section><aside className="settings-card"><h3>Image settings</h3><div className="setting"><label>Composition</label><div className="pills">{imageSizes.map((option) => <button onClick={() => setSize(option.value)} key={option.value} className={size === option.value ? 'selected' : ''}><i className={`ratio ${option.className}`} />{option.label}</button>)}</div></div><p className="setting-note">Quality, style, and multi-image controls will be added only when the selected provider supports them.</p><Button className="generate-button" onClick={generateImage} disabled={submitting}><Image size={17} /> {submitting ? 'Generating image…' : available ? 'Generate image' : 'Image generation unavailable'} <span>{cost ? `${cost} credits` : '—'}</span></Button></aside></div>
+    {feedback && <div className={`generated-toast ${feedback.type}`}><span>{feedback.type === 'error' ? <X size={18} /> : <Sparkles size={18} />}</span><div><strong>{feedback.title}</strong><p>{feedback.detail}</p></div>{feedback.type === 'success' && <button onClick={() => onPage('projects')}>View creations <ArrowRight size={15} /></button>}</div>}
+    <section className="image-history"><div className="section-heading"><div><h2>Image history</h2><p>Your most recent private generations</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></div><div className="image-history-grid">{imageHistory.length ? imageHistory.slice(0, 6).map((creation) => <article key={creation.id} className="image-history-card">{creation.assetUrl ? <img src={creation.assetUrl} alt={creation.title} /> : <div className="image-history-empty"><Image size={20} /></div>}<span>{creation.title}</span>{creation.assetUrl && <button onClick={() => void downloadImage(creation.assetUrl!, 'cezik-image.png')} aria-label={`Download ${creation.title}`}><Download size={15} /></button>}</article>) : <div className="creation-empty"><Image size={21} /><strong>No images yet</strong><small>Your completed image generations will appear here.</small></div>}</div></section>
   </div></Shell>
 }
 
@@ -375,8 +463,10 @@ function App() {
         ? <Dashboard onPage={navigate} name={displayName} />
         : page === 'projects'
           ? <Projects onPage={navigate} />
-          : page === 'generate'
-            ? <Generator onPage={navigate} />
+        : page === 'generate'
+          ? <Generator onPage={navigate} />
+          : page === 'image'
+            ? <ImageGenerator onPage={navigate} />
             : <Editor onPage={navigate} />
   return <StudioContext.Provider value={studio}>{screen}</StudioContext.Provider>
 }
