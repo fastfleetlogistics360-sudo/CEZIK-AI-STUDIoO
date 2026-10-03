@@ -33,12 +33,24 @@ export type CreditPackage = {
   sort_order: number
 }
 
+export type CreditPurchase = {
+  id: string
+  credit_amount: number
+  amount: number
+  currency: string
+  provider: string
+  status: string
+  created_at: string
+  credit_packages: { name: string } | null
+}
+
 export type StudioData = {
   balance: number
   activity: AiActivity | null
   imageActivity: AiActivity | null
   creations: Creation[]
   packages: CreditPackage[]
+  purchases: CreditPurchase[]
 }
 
 const emptyStudioData: StudioData = {
@@ -47,17 +59,19 @@ const emptyStudioData: StudioData = {
   imageActivity: null,
   creations: [],
   packages: [],
+  purchases: [],
 }
 
 export async function loadStudioData(client: SupabaseClient): Promise<StudioData> {
-  const [wallet, activity, creations, packages] = await Promise.all([
+  const [wallet, activity, creations, packages, purchases] = await Promise.all([
     client.from('credit_wallets').select('balance').maybeSingle(),
     client.from('ai_activities').select('id, slug, name, description, credit_cost, provider, enabled').in('slug', ['video-generation', 'image-generation']),
     client.from('creations').select('id, title, type, status, storage_bucket, storage_path, preview_path, metadata, created_at').order('created_at', { ascending: false }).limit(24),
     client.from('credit_packages').select('id, name, credits, price, currency, description, sort_order').eq('active', true).order('sort_order'),
+    client.from('credit_purchases').select('id, credit_amount, amount, currency, provider, status, created_at, credit_packages(name)').order('created_at', { ascending: false }).limit(8),
   ])
 
-  const errors = [wallet.error, activity.error, creations.error, packages.error].filter(Boolean)
+  const errors = [wallet.error, activity.error, creations.error, packages.error, purchases.error].filter(Boolean)
   if (errors.length > 0) throw errors[0]
 
   const creationRows = creations.data ?? []
@@ -74,6 +88,10 @@ export async function loadStudioData(client: SupabaseClient): Promise<StudioData
     imageActivity: activities.find((item) => item.slug === 'image-generation') ?? null,
     creations: creationsWithUrls,
     packages: packages.data ?? [],
+    purchases: (purchases.data ?? []).map((purchase) => ({
+      ...purchase,
+      credit_packages: Array.isArray(purchase.credit_packages) ? purchase.credit_packages[0] ?? null : purchase.credit_packages,
+    })) as CreditPurchase[],
   }
 }
 

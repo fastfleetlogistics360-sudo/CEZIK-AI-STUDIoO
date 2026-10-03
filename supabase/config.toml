@@ -6,3 +6,7 @@
 [functions.process-ai-job]
 verify_jwt = false
 
+# PayPal calls this endpoint directly. Its handler verifies the PayPal
+# signature before it performs any database change.
+[functions.billing-webhook]
+verify_jwt = false

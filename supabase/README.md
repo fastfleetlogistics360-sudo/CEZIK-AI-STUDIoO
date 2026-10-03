@@ -62,3 +62,29 @@ The price is database-controlled (`credit_cost`, seeded as 10), not client-contr
 ## Payments
 
 When a payment provider is chosen, create a pending `payments` row first. Only its verified webhook may call `confirm_credit_payment`; that procedure marks the row successful and credits the package amount atomically. Never grant browser write access to `payments`, `credit_wallets`, or `credit_transactions`.
+
+## PayPal Sandbox credit checkout
+
+The PayPal implementation is deliberately sandbox-only. Apply the additive
+`202610030001_paypal_credit_purchases.sql` migration and deploy these Edge
+Functions together: `paypal-sdk-config`, `create-paypal-credit-order`,
+`capture-paypal-credit-order`, and `billing-webhook`.
+
+Set the following **Edge Function secrets**, never Vite/browser variables:
+
+```text
+CEZIK_PAYPAL_ENV=sandbox
+PAYPAL_API_BASE_URL=https://api-m.sandbox.paypal.com
+PAYPAL_CLIENT_ID=...
+PAYPAL_CLIENT_SECRET=...
+PAYPAL_WEBHOOK_ID=...
+```
+
+Register the deployed `billing-webhook` HTTPS endpoint in the PayPal Sandbox
+Developer Dashboard for `PAYMENT.CAPTURE.COMPLETED`,
+`PAYMENT.CAPTURE.DENIED`, and `CHECKOUT.PAYMENT-APPROVAL.REVERSED`. CEZIK posts
+each notification back to PayPal for signature verification and ignores
+duplicate event IDs. Only a verified completed capture whose order, capture ID,
+amount, and currency match a local purchase can call the locked wallet grant
+function. The PayPal client secret never reaches the browser; the authenticated
+SDK-config endpoint returns only the public client ID needed to load the SDK.

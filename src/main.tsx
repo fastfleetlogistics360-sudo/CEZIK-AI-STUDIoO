@@ -8,7 +8,7 @@ import {
   SlidersHorizontal, Sparkles, Upload, Video, WandSparkles, X, Zap
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
-import { isActivityAvailable, loadStudioData, type Creation, type StudioData } from './lib/cezik'
+import { isActivityAvailable, loadStudioData, type Creation, type CreditPackage, type StudioData } from './lib/cezik'
 import { acceptedImageTypes, compressImage, convertImage, extensionByType, filenameFor, formatBytes, readImageDetails, removeBackground, resizeImage, validateImageFile, type ImageDetails, type OutputFormat } from './lib/image-processing'
 import './styles.css'
 import './neon.css'
@@ -17,6 +17,44 @@ import './native-image-tools.css'
 
 type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'generate' | 'image' | 'editor' | 'background-remover' | 'image-compressor' | 'image-resizer' | 'image-converter'
 type AuthMode = 'signin' | 'signup' | 'reset'
+
+type PayPalButtons = {
+  render: (container: HTMLElement) => Promise<void> | void
+  close?: () => void
+}
+
+type PayPalSdk = {
+  Buttons: (options: {
+    createOrder: () => Promise<string>
+    onApprove: (data: { orderID: string }) => Promise<void>
+    onCancel?: () => void
+    onError?: () => void
+  }) => PayPalButtons
+}
+
+declare global {
+  interface Window { paypal?: PayPalSdk }
+}
+
+let paypalSdkPromise: Promise<void> | null = null
+let paypalSdkCurrency: string | null = null
+
+function loadPaypalSdk(clientId: string, currency: string) {
+  if (paypalSdkPromise) {
+    if (paypalSdkCurrency !== currency) return Promise.reject(new Error('PayPal checkout is available in one currency at a time.'))
+    return paypalSdkPromise
+  }
+  paypalSdkCurrency = currency
+  paypalSdkPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=${encodeURIComponent(currency)}&intent=capture&components=buttons`
+    script.async = true
+    script.onload = () => window.paypal ? resolve() : reject(new Error('PayPal checkout did not load.'))
+    script.onerror = () => reject(new Error('PayPal checkout could not load.'))
+    document.head.appendChild(script)
+  })
+  return paypalSdkPromise
+}
 
 const navItems: { id: Page | null; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'home', label: 'Home', icon: LayoutDashboard },
@@ -162,7 +200,53 @@ function Dashboard({ onPage, name }: { onPage: (p: Page) => void; name: string }
 function CreditPackages({ onClose }: { onClose: () => void }) {
   const studio = useStudio()
   const packages = studio?.data?.packages ?? []
-  return <div className="credit-modal-backdrop" role="presentation" onClick={onClose}><section className="credit-modal" role="dialog" aria-modal="true" aria-label="Buy CEZIK credits" onClick={(event) => event.stopPropagation()}><button className="credit-modal-close" onClick={onClose} aria-label="Close credit packages"><X size={17} /></button><span className="overline">CEZIK CREDITS</span><h2>Choose your next<br /><i>creative runway.</i></h2><p>Packages are controlled securely from CEZIK’s server configuration.</p><div className="package-grid">{studio?.loading ? <div className="package-loading">Loading packages…</div> : packages.length > 0 ? packages.map((creditPackage) => <article className="package-card" key={creditPackage.id}><span>{creditPackage.name}</span><strong>{creditPackage.credits.toLocaleString()} <i>credits</i></strong><p>{creditPackage.description}</p><b>{new Intl.NumberFormat(undefined, { style: 'currency', currency: creditPackage.currency }).format(Number(creditPackage.price))}</b><Button variant="ghost" disabled>Checkout coming soon</Button></article>) : <div className="package-loading">Credit packages will appear after the database setup is complete.</div>}</div><small>Credits are added only after a verified payment webhook confirms payment.</small></section></div>
+  const purchases = studio?.data?.purchases ?? []
+  return <div className="credit-modal-backdrop" role="presentation" onClick={onClose}><section className="credit-modal" role="dialog" aria-modal="true" aria-label="Buy CEZIK credits" onClick={(event) => event.stopPropagation()}><button className="credit-modal-close" onClick={onClose} aria-label="Close credit packages"><X size={17} /></button><span className="overline">CEZIK CREDITS</span><h2>Choose your next<br /><i>creative runway.</i></h2><p>Package values are set on CEZIK’s server. PayPal checkout is available in Sandbox only.</p><div className="package-grid">{studio?.loading ? <div className="package-loading">Loading packages…</div> : packages.length > 0 ? packages.map((creditPackage) => <article className="package-card" key={creditPackage.id}><span>{creditPackage.name}</span><strong>{creditPackage.credits.toLocaleString()} <i>credits</i></strong><p>{creditPackage.description}</p><b>{new Intl.NumberFormat(undefined, { style: 'currency', currency: creditPackage.currency }).format(Number(creditPackage.price))}</b><PayPalCheckoutButton creditPackage={creditPackage} onComplete={() => void studio?.refresh()} /></article>) : <div className="package-loading">Credit packages will appear after the database setup is complete.</div>}</div>{purchases.length > 0 && <div className="purchase-history"><span className="overline">RECENT PURCHASES</span>{purchases.map((purchase) => <div key={purchase.id}><span>{purchase.credit_packages?.name ?? 'Credit package'} · {purchase.credit_amount.toLocaleString()} credits</span><b>{purchase.status}</b></div>)}</div>}<small>Credits are added only after CEZIK verifies a completed PayPal capture.</small></section></div>
+}
+
+function PayPalCheckoutButton({ creditPackage, onComplete }: { creditPackage: CreditPackage; onComplete: () => void }) {
+  const container = useRef<HTMLDivElement>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  useEffect(() => {
+    let active = true
+    let buttons: PayPalButtons | undefined
+    let purchaseId: string | null = null
+    const client = supabase
+    const render = async () => {
+      if (!client || !container.current) { if (active) setMessage('Sign in to purchase credits.'); return }
+      try {
+        const { data: config, error: configError } = await client.functions.invoke('paypal-sdk-config', { method: 'GET' })
+        if (configError || !config?.clientId) throw new Error('PayPal Sandbox is not configured.')
+        await loadPaypalSdk(config.clientId, creditPackage.currency)
+        if (!active || !container.current || !window.paypal) return
+        buttons = window.paypal.Buttons({
+          createOrder: async () => {
+            setMessage('Creating secure checkout…')
+            const { data, error } = await client.functions.invoke('create-paypal-credit-order', { body: { packageId: creditPackage.id } })
+            if (error || !data?.orderId || !data?.purchaseId) throw new Error(data?.error ?? 'Could not create PayPal checkout.')
+            purchaseId = data.purchaseId
+            setMessage(null)
+            return data.orderId
+          },
+          onApprove: async () => {
+            if (!purchaseId) throw new Error('Credit purchase was not initialized.')
+            setMessage('Confirming payment and adding credits…')
+            const { data, error } = await client.functions.invoke('capture-paypal-credit-order', { body: { purchaseId } })
+            if (error || data?.status !== 'credited') throw new Error(data?.error ?? 'Payment is processing. Check purchase history shortly.')
+            if (active) { setMessage('Credits added successfully.'); onComplete() }
+          },
+          onCancel: () => { if (active) setMessage('Checkout cancelled. No credits were added.') },
+          onError: () => { if (active) setMessage('Checkout could not be completed. No credits were added.') },
+        })
+        await buttons.render(container.current)
+      } catch (error) {
+        if (active) setMessage(error instanceof Error ? error.message : 'PayPal checkout is unavailable.')
+      }
+    }
+    void render()
+    return () => { active = false; buttons?.close?.(); if (container.current) container.current.replaceChildren() }
+  }, [creditPackage.id, creditPackage.currency, onComplete])
+  return <div className="paypal-checkout"><div ref={container} />{message && <small role="status">{message}</small>}</div>
 }
 
 function ProjectCard({ project, onClick }: { project: ProjectCardData; onClick: () => void }) { return <button className="project-card" onClick={onClick}><div className={`project-thumb ${project.color}`}>{project.assetUrl && <img src={project.assetUrl} alt="" />}<span className="play-circle">{project.type === 'image' ? <Image size={15} /> : <Play size={15} fill="currentColor" />}</span><span className="duration">AI</span></div><div className="project-info"><div><strong>{project.name}</strong><small>{project.type}</small></div><span className="more"><MoreHorizontal size={18} /></span></div><div className="project-meta"><span>{project.date}</span><b className={project.status === 'Ready' ? 'ready' : ''}>{project.status}</b></div></button> }
