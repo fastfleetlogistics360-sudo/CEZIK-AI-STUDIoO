@@ -44,34 +44,55 @@ export type CreditPurchase = {
   credit_packages: { name: string } | null
 }
 
+export type Profile = {
+  display_name: string | null
+  email: string | null
+  created_at: string
+}
+
+export type CreditTransaction = {
+  id: string
+  type: string
+  amount: number
+  balance_after: number
+  description: string
+  created_at: string
+}
+
 export type StudioData = {
+  profile: Profile | null
   balance: number
   activity: AiActivity | null
   imageActivity: AiActivity | null
   creations: Creation[]
   packages: CreditPackage[]
   purchases: CreditPurchase[]
+  transactions: CreditTransaction[]
 }
 
 const emptyStudioData: StudioData = {
+  profile: null,
   balance: 0,
   activity: null,
   imageActivity: null,
   creations: [],
   packages: [],
   purchases: [],
+  transactions: [],
 }
 
 export async function loadStudioData(client: SupabaseClient): Promise<StudioData> {
-  const [wallet, activity, creations, packages, purchases] = await Promise.all([
+  const [profile, wallet, activity, creations, packages, purchases, transactions] = await Promise.all([
+    client.from('profiles').select('display_name, email, created_at').maybeSingle(),
     client.from('credit_wallets').select('balance').maybeSingle(),
     client.from('ai_activities').select('id, slug, name, description, credit_cost, provider, enabled').in('slug', ['video-generation', 'image-generation']),
     client.from('creations').select('id, title, type, status, storage_bucket, storage_path, preview_path, metadata, created_at').order('created_at', { ascending: false }).limit(24),
     client.from('credit_packages').select('id, name, credits, price, currency, description, sort_order').eq('active', true).order('sort_order'),
     client.from('credit_purchases').select('id, credit_amount, amount, currency, provider, status, created_at, credit_packages(name)').order('created_at', { ascending: false }).limit(8),
+    client.from('credit_transactions').select('id, type, amount, balance_after, description, created_at').order('created_at', { ascending: false }).limit(12),
   ])
 
-  const errors = [wallet.error, activity.error, creations.error, packages.error, purchases.error].filter(Boolean)
+  const errors = [profile.error, wallet.error, activity.error, creations.error, packages.error, purchases.error, transactions.error].filter(Boolean)
   if (errors.length > 0) throw errors[0]
 
   const creationRows = creations.data ?? []
@@ -83,6 +104,7 @@ export async function loadStudioData(client: SupabaseClient): Promise<StudioData
   const activities = activity.data ?? []
 
   return {
+    profile: profile.data ?? emptyStudioData.profile,
     balance: wallet.data?.balance ?? emptyStudioData.balance,
     activity: activities.find((item) => item.slug === 'video-generation') ?? null,
     imageActivity: activities.find((item) => item.slug === 'image-generation') ?? null,
@@ -92,6 +114,7 @@ export async function loadStudioData(client: SupabaseClient): Promise<StudioData
       ...purchase,
       credit_packages: Array.isArray(purchase.credit_packages) ? purchase.credit_packages[0] ?? null : purchase.credit_packages,
     })) as CreditPurchase[],
+    transactions: (transactions.data ?? []) as CreditTransaction[],
   }
 }
 

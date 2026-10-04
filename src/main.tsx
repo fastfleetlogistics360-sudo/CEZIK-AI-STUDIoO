@@ -2,10 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createRoot } from 'react-dom/client'
 import type { Session } from '@supabase/supabase-js'
 import {
-  ArrowRight, Bell, CheckCircle2, ChevronDown, Clapperboard, Clock3, Command, Copy,
-  Download, Eraser, FileImage, FileVideo, FolderOpen, Grid2X2, Image, Layers3, LayoutDashboard, Maximize2, Minimize2,
-  LoaderCircle, LockKeyhole, Mail, Menu, MoreHorizontal, Music2, PanelLeftClose, Play, Plus, RefreshCw, Search, Settings,
-  SlidersHorizontal, Sparkles, Upload, Video, WandSparkles, X, Zap
+  ArrowRight, CheckCircle2, ChevronDown, Clapperboard, Clock3, Command, Copy,
+  Download, Eraser, FileImage, FileVideo, FolderOpen, Image, LayoutDashboard, Maximize2, Minimize2,
+  CreditCard, History, LoaderCircle, LockKeyhole, LogOut, Mail, MoreHorizontal, PanelLeftClose, Play, Plus, RefreshCw, Search, Settings,
+  ShieldCheck, SlidersHorizontal, Sparkles, Upload, UserRound, Video, WandSparkles, X, Zap
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { isActivityAvailable, loadStudioData, type Creation, type CreditPackage, type StudioData } from './lib/cezik'
@@ -14,9 +14,24 @@ import './styles.css'
 import './neon.css'
 import './image-generator.css'
 import './native-image-tools.css'
+import './product.css'
 
-type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'generate' | 'image' | 'editor' | 'background-remover' | 'image-compressor' | 'image-resizer' | 'image-converter'
+type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'billing' | 'account' | 'settings' | 'generate' | 'image' | 'editor' | 'background-remover' | 'image-compressor' | 'image-resizer' | 'image-converter'
 type AuthMode = 'signin' | 'signup' | 'reset'
+
+const pagePaths: Record<Page, string> = {
+  welcome: '/', auth: '/auth', home: '/dashboard', projects: '/projects', billing: '/billing', account: '/account', settings: '/settings',
+  generate: '/generate', image: '/image', editor: '/editor', 'background-remover': '/background-remover', 'image-compressor': '/image-compressor', 'image-resizer': '/image-resizer', 'image-converter': '/image-converter',
+}
+
+function pageForPath(pathname: string): Page {
+  const page = (Object.entries(pagePaths).find(([, path]) => path === pathname)?.[0] as Page | undefined)
+  return page ?? 'welcome'
+}
+
+function isKnownPath(pathname: string) {
+  return Object.values(pagePaths).includes(pathname)
+}
 
 type PayPalButtons = {
   render: (container: HTMLElement) => Promise<void> | void
@@ -38,6 +53,7 @@ declare global {
 
 let paypalSdkPromise: Promise<void> | null = null
 let paypalSdkCurrency: string | null = null
+let paypalConfigPromise: Promise<{ clientId: string }> | null = null
 
 function loadPaypalSdk(clientId: string, currency: string) {
   if (paypalSdkPromise) {
@@ -56,16 +72,28 @@ function loadPaypalSdk(clientId: string, currency: string) {
   return paypalSdkPromise
 }
 
-const navItems: { id: Page | null; label: string; icon: typeof LayoutDashboard }[] = [
+function loadPaypalConfig() {
+  if (paypalConfigPromise) return paypalConfigPromise
+  if (!supabase) return Promise.reject(new Error('Sign in to purchase credits.'))
+  paypalConfigPromise = supabase.functions.invoke('paypal-sdk-config', { method: 'GET' }).then(({ data, error }) => {
+    if (error || !data?.clientId) throw new Error('PayPal Sandbox is not configured.')
+    return data as { clientId: string }
+  }).catch((error) => {
+    paypalConfigPromise = null
+    throw error
+  })
+  return paypalConfigPromise
+}
+
+const navItems: { id: Page | null; label: string; icon: typeof LayoutDashboard; comingSoon?: boolean }[] = [
   { id: 'home', label: 'Home', icon: LayoutDashboard },
   { id: 'projects', label: 'My Projects', icon: FolderOpen },
   { id: 'image', label: 'AI Image Generator', icon: Image },
   { id: 'background-remover', label: 'Background Remover', icon: Eraser },
   { id: 'generate', label: 'AI Video Generator', icon: Sparkles },
-  { id: 'editor', label: 'AI Video Editor', icon: Clapperboard },
-  { id: null, label: 'Templates', icon: Grid2X2 },
-  { id: null, label: 'Assets', icon: Image },
-  { id: null, label: 'Settings', icon: Settings },
+  { id: 'editor', label: 'AI Video Editor', icon: Clapperboard, comingSoon: true },
+  { id: 'billing', label: 'Billing & credits', icon: CreditCard },
+  { id: 'settings', label: 'Settings', icon: Settings },
 ]
 
 type ProjectCardData = {
@@ -86,15 +114,35 @@ type StudioContextValue = {
 }
 
 const StudioContext = createContext<StudioContextValue | null>(null)
+type AccountContextValue = { displayName: string | null; email: string | null; initials: string; signOut: () => Promise<Error | null> }
+const AccountContext = createContext<AccountContextValue | null>(null)
 
 function useStudio() {
   return useContext(StudioContext)
 }
 
+function useAccount() {
+  return useContext(AccountContext)
+}
+
+function greetingForCurrentTime() {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 12) return 'Good morning'
+  if (hour < 17) return 'Good afternoon'
+  if (hour < 22) return 'Good evening'
+  return 'Welcome back'
+}
+
+function displayInitials(name: string | null, email: string | null) {
+  const words = name?.trim().split(/\s+/).filter(Boolean) ?? []
+  if (words.length) return words.slice(0, 2).map((word) => word[0]).join('').toUpperCase()
+  return email?.slice(0, 2).toUpperCase() || 'CE'
+}
+
 const tools = [
   { name: 'Image Generator', description: 'Turn prompts into ready-to-use visuals', icon: Image, color: 'rose', page: 'image' as Page },
   { name: 'Video Generator', description: 'Turn ideas into cinematic video', icon: Sparkles, color: 'violet', page: 'generate' as Page },
-  { name: 'AI Video Editor', description: 'Edit projects with natural language', icon: WandSparkles, color: 'blue', page: 'editor' as Page },
+  { name: 'AI Video Editor', description: 'Coming soon — AI-assisted video editing', icon: WandSparkles, color: 'blue', page: 'editor' as Page },
   { name: 'Background Remover', description: 'Remove a portrait background privately', icon: Eraser, color: 'mint', page: 'background-remover' as Page },
   { name: 'Image Compressor', description: 'Make JPGs and WebPs smaller locally', icon: Minimize2, color: 'cyan', page: 'image-compressor' as Page },
   { name: 'Image Resizer', description: 'Change image dimensions in your browser', icon: Maximize2, color: 'indigo', page: 'image-resizer' as Page },
@@ -131,13 +179,12 @@ function Button({ children, variant = 'primary', onClick, className = '', disabl
 }
 
 function TopBar({ onPage, title, compact = false }: { onPage: (p: Page) => void; title?: string; compact?: boolean }) {
+  const account = useAccount()
   return <header className={`topbar ${compact ? 'compact' : ''}`}>
     <div className="mobile-logo"><Logo /></div>
     {title && <div className="page-title">{title}</div>}
     <div className="top-actions">
-      {!compact && <button className="icon-button"><Search size={19} /></button>}
-      <button className="icon-button notification"><Bell size={18} /><b /></button>
-      <button className="profile"><span>AD</span><ChevronDown size={15} /></button>
+      <button className="profile" onClick={() => onPage('account')} aria-label="Open account"><span>{account?.initials ?? 'CE'}</span><ChevronDown size={15} /></button>
       {!compact && <Button onClick={() => onPage('image')}><Plus size={17} /> Create</Button>}
     </div>
   </header>
@@ -147,13 +194,13 @@ function Sidebar({ page, onPage }: { page: Page; onPage: (p: Page) => void }) {
   const [open, setOpen] = useState(true)
   const studio = useStudio()
   const balance = studio?.data?.balance
-  const isActive = (page: Page, label: string) => (page === 'home' && label === 'Home') || (page === 'projects' && label === 'My Projects') || (page === 'image' && label === 'AI Image Generator') || (page === 'background-remover' && label === 'Background Remover') || (page === 'generate' && label === 'AI Video Generator') || (page === 'editor' && label === 'AI Video Editor')
+  const account = useAccount()
   return <aside className={`sidebar ${open ? '' : 'collapsed'}`}>
-    <div className="side-top"><Logo markOnly={!open} /><button onClick={() => setOpen(!open)} className="collapse"><PanelLeftClose size={18} /></button></div>
-    <nav>{navItems.map(({ id, label, icon: Icon }, index) => <button key={`${label}-${index}`} onClick={() => id && onPage(id)} disabled={!id} className={`nav-item ${isActive(page, label) ? 'active' : ''}`}><Icon size={19} /><span>{label}</span>{label === 'AI Video Generator' ? <em>NEW</em> : !id && <em>SOON</em>}</button>)}</nav>
+    <div className="side-top"><Logo markOnly={!open} /><button onClick={() => setOpen(!open)} className="collapse" aria-label={open ? 'Collapse sidebar' : 'Expand sidebar'}><PanelLeftClose size={18} /></button></div>
+    <nav>{navItems.map(({ id, label, icon: Icon, comingSoon }) => <button key={label} onClick={() => id && onPage(id)} disabled={!id} aria-label={label} className={`nav-item ${page === id ? 'active' : ''}`}><Icon size={19} /><span>{label}</span>{comingSoon && <em>SOON</em>}</button>)}</nav>
     <div className="side-bottom">
-      {open && <div className="usage-card"><span>CEZIK CREDITS</span><strong>{studio?.loading ? '…' : balance ?? '—'} <i>available</i></strong><div className="progress"><b style={{ width: balance === undefined ? '0%' : `${Math.min(100, Math.max(4, balance / 10))}%` }} /></div><button onClick={() => onPage('image')}>Create with credits <ArrowRight size={13} /></button></div>}
-      <button className="account"><span className="avatar">AD</span>{open && <span><strong>Alex Doe</strong><small>Pro workspace</small></span>}<MoreHorizontal size={18} /></button>
+      {open && <div className="usage-card"><span>CEZIK CREDITS</span><strong>{studio?.loading ? '…' : balance ?? '—'} <i>available</i></strong><div className="progress"><b style={{ width: balance === undefined ? '0%' : `${Math.min(100, Math.max(4, balance / 10))}%` }} /></div><button onClick={() => onPage('billing')}>Manage credits <ArrowRight size={13} /></button></div>}
+      <button className="account" onClick={() => onPage('account')} aria-label="Open account"><span className="avatar">{account?.initials ?? 'CE'}</span>{open && <span><strong>{account?.displayName ?? 'Your account'}</strong><small>{account?.email ?? 'Account details'}</small></span>}<MoreHorizontal size={18} /></button>
     </div>
   </aside>
 }
@@ -182,30 +229,23 @@ function Welcome({ onAuth, onExplore }: { onAuth: (mode: AuthMode) => void; onEx
   </div>
 }
 
-function Dashboard({ onPage, name }: { onPage: (p: Page) => void; name: string }) {
+function Dashboard({ onPage }: { onPage: (p: Page) => void }) {
   const studio = useStudio()
-  const [packagesOpen, setPackagesOpen] = useState(false)
+  const account = useAccount()
   const projects = (studio?.data?.creations ?? []).map(toProjectCard)
   return <Shell page="home" onPage={onPage}><div className="content dashboard">
-    <section className="dashboard-hero"><div><span className="overline">YOUR CEZIK WORKSPACE</span><h1>Good morning, {name}.</h1><p>What will you bring to life today?</p></div><Button onClick={() => onPage('image')}><Sparkles size={17} /> Create with AI</Button></section>
-    <section className="credit-summary"><div><span className="overline">CEZIK CREDITS</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><p>{studio?.error ? 'Finish the CEZIK database setup to load your wallet.' : 'Your balance is secured and managed server-side.'}</p></div><Button variant="ghost" onClick={() => setPackagesOpen(true)}>Buy credits <ArrowRight size={15} /></Button></section>
+    <section className="dashboard-hero"><div><span className="overline">YOUR CEZIK WORKSPACE</span><h1>{greetingForCurrentTime()}{account?.displayName ? `, ${account.displayName}` : ''}.</h1><p>Choose a tool or continue with your recent work.</p></div><Button onClick={() => onPage('image')}><Sparkles size={17} /> Create with AI</Button></section>
+    <section className="credit-summary"><div><span className="overline">CEZIK CREDITS</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><p>{studio?.error ? 'Your wallet could not be loaded. Please refresh and try again.' : 'Your credits and purchases are verified server-side.'}</p></div><Button variant="ghost" onClick={() => onPage('billing')}>Manage credits <ArrowRight size={15} /></Button></section>
     <section className="tool-grid">{tools.map(({ name: toolName, description, icon: Icon, color, page }) => <button className="tool-card" key={toolName} onClick={() => page && onPage(page)} disabled={!page}><span className={`tool-icon ${color}`}><Icon size={21} /></span><span><strong>{toolName}</strong><small>{description}</small></span>{page ? <ArrowRight size={18} /> : <Clock3 size={17} />}</button>)}</section>
     <section className="section-heading"><div><h2>Continue creating</h2><p>Your recent projects</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></section>
-    <section className="project-row">{projects.length > 0 ? projects.slice(0, 4).map((project) => <ProjectCard key={project.id} project={project} onClick={() => onPage('editor')} />) : <button className="empty-projects" onClick={() => onPage('image')}><Image size={20} /><strong>Your creations will appear here</strong><small>Start with an AI image prompt once the provider is activated.</small></button>}<button onClick={() => onPage('projects')} className="all-projects"> <FolderOpen size={22} /><span>View all creations</span><ArrowRight size={16} /></button></section>
-    <section className="inspiration"><div><span className="overline">EXPLORE THE POSSIBLE</span><h2>Made to make your<br /><i>best work yet.</i></h2><Button variant="ghost" onClick={() => onPage('generate')}>Explore templates <ArrowRight size={16} /></Button></div><div className="inspiration-art"><div className="art-ball" /><div className="art-column" /><span>01<br /><b>CREATE</b></span></div></section>
-    {packagesOpen && <CreditPackages onClose={() => setPackagesOpen(false)} />}
+    <section className="project-row">{projects.length > 0 ? projects.slice(0, 4).map((project) => <ProjectCard key={project.id} project={project} />) : <button className="empty-projects" onClick={() => onPage('image')}><Image size={20} /><strong>Your creations will appear here</strong><small>Start with an AI image prompt once the provider is activated.</small></button>}<button onClick={() => onPage('projects')} className="all-projects"> <FolderOpen size={22} /><span>View all creations</span><ArrowRight size={16} /></button></section>
+    <section className="inspiration"><div><span className="overline">EXPLORE THE POSSIBLE</span><h2>Made to make your<br /><i>best work yet.</i></h2><Button variant="ghost" onClick={() => onPage('generate')}>Try video generation <ArrowRight size={16} /></Button></div><div className="inspiration-art"><div className="art-ball" /><div className="art-column" /><span>01<br /><b>CREATE</b></span></div></section>
   </div></Shell>
-}
-
-function CreditPackages({ onClose }: { onClose: () => void }) {
-  const studio = useStudio()
-  const packages = studio?.data?.packages ?? []
-  const purchases = studio?.data?.purchases ?? []
-  return <div className="credit-modal-backdrop" role="presentation" onClick={onClose}><section className="credit-modal" role="dialog" aria-modal="true" aria-label="Buy CEZIK credits" onClick={(event) => event.stopPropagation()}><button className="credit-modal-close" onClick={onClose} aria-label="Close credit packages"><X size={17} /></button><span className="overline">CEZIK CREDITS</span><h2>Choose your next<br /><i>creative runway.</i></h2><p>Package values are set on CEZIK’s server. PayPal checkout is available in Sandbox only.</p><div className="package-grid">{studio?.loading ? <div className="package-loading">Loading packages…</div> : packages.length > 0 ? packages.map((creditPackage) => <article className="package-card" key={creditPackage.id}><span>{creditPackage.name}</span><strong>{creditPackage.credits.toLocaleString()} <i>credits</i></strong><p>{creditPackage.description}</p><b>{new Intl.NumberFormat(undefined, { style: 'currency', currency: creditPackage.currency }).format(Number(creditPackage.price))}</b><PayPalCheckoutButton creditPackage={creditPackage} onComplete={() => void studio?.refresh()} /></article>) : <div className="package-loading">Credit packages will appear after the database setup is complete.</div>}</div>{purchases.length > 0 && <div className="purchase-history"><span className="overline">RECENT PURCHASES</span>{purchases.map((purchase) => <div key={purchase.id}><span>{purchase.credit_packages?.name ?? 'Credit package'} · {purchase.credit_amount.toLocaleString()} credits</span><b>{purchase.status}</b></div>)}</div>}<small>Credits are added only after CEZIK verifies a completed PayPal capture.</small></section></div>
 }
 
 function PayPalCheckoutButton({ creditPackage, onComplete }: { creditPackage: CreditPackage; onComplete: () => void }) {
   const container = useRef<HTMLDivElement>(null)
+  const orderInProgress = useRef(false)
   const [message, setMessage] = useState<string | null>(null)
   useEffect(() => {
     let active = true
@@ -215,18 +255,21 @@ function PayPalCheckoutButton({ creditPackage, onComplete }: { creditPackage: Cr
     const render = async () => {
       if (!client || !container.current) { if (active) setMessage('Sign in to purchase credits.'); return }
       try {
-        const { data: config, error: configError } = await client.functions.invoke('paypal-sdk-config', { method: 'GET' })
-        if (configError || !config?.clientId) throw new Error('PayPal Sandbox is not configured.')
+        const config = await loadPaypalConfig()
         await loadPaypalSdk(config.clientId, creditPackage.currency)
         if (!active || !container.current || !window.paypal) return
         buttons = window.paypal.Buttons({
           createOrder: async () => {
+            if (orderInProgress.current) throw new Error('A secure checkout is already being created.')
+            orderInProgress.current = true
             setMessage('Creating secure checkout…')
-            const { data, error } = await client.functions.invoke('create-paypal-credit-order', { body: { packageId: creditPackage.id } })
-            if (error || !data?.orderId || !data?.purchaseId) throw new Error(data?.error ?? 'Could not create PayPal checkout.')
-            purchaseId = data.purchaseId
-            setMessage(null)
-            return data.orderId
+            try {
+              const { data, error } = await client.functions.invoke('create-paypal-credit-order', { body: { packageId: creditPackage.id } })
+              if (error || !data?.orderId || !data?.purchaseId) throw new Error(data?.error ?? 'Could not create PayPal checkout.')
+              purchaseId = data.purchaseId
+              setMessage(null)
+              return data.orderId
+            } finally { orderInProgress.current = false }
           },
           onApprove: async () => {
             if (!purchaseId) throw new Error('Credit purchase was not initialized.')
@@ -249,7 +292,7 @@ function PayPalCheckoutButton({ creditPackage, onComplete }: { creditPackage: Cr
   return <div className="paypal-checkout"><div ref={container} />{message && <small role="status">{message}</small>}</div>
 }
 
-function ProjectCard({ project, onClick }: { project: ProjectCardData; onClick: () => void }) { return <button className="project-card" onClick={onClick}><div className={`project-thumb ${project.color}`}>{project.assetUrl && <img src={project.assetUrl} alt="" />}<span className="play-circle">{project.type === 'image' ? <Image size={15} /> : <Play size={15} fill="currentColor" />}</span><span className="duration">AI</span></div><div className="project-info"><div><strong>{project.name}</strong><small>{project.type}</small></div><span className="more"><MoreHorizontal size={18} /></span></div><div className="project-meta"><span>{project.date}</span><b className={project.status === 'Ready' ? 'ready' : ''}>{project.status}</b></div></button> }
+function ProjectCard({ project }: { project: ProjectCardData }) { return <article className="project-card"><div className={`project-thumb ${project.color}`}>{project.assetUrl && <img src={project.assetUrl} alt="" />}<span className="duration">{project.type}</span></div><div className="project-info"><div><strong>{project.name}</strong><small>{project.type}</small></div></div><div className="project-meta"><span>{project.date}</span><b className={project.status === 'Ready' ? 'ready' : ''}>{project.status}</b></div></article> }
 
 function Projects({ onPage }: { onPage: (p: Page) => void }) {
   const [query, setQuery] = useState('')
@@ -259,13 +302,13 @@ function Projects({ onPage }: { onPage: (p: Page) => void }) {
   return <Shell page="projects" onPage={onPage} title="My Projects"><div className="content projects-page">
     <section className="page-head"><div><span className="overline">YOUR WORKSPACE</span><h1>My Creations</h1><p>Every completed CEZIK job, in one place.</p></div><Button onClick={() => onPage('generate')}><Plus size={17} /> New project</Button></section>
     <div className="project-controls"><label><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search creations" />{query && <button onClick={() => setQuery('')}><X size={15} /></button>}</label><Button variant="ghost" disabled><SlidersHorizontal size={16} /> Filters soon</Button><Button variant="ghost" disabled>Newest first <ChevronDown size={15} /></Button></div>
-    <div className="projects-grid">{shown.map((project) => <ProjectCard key={project.id} project={project} onClick={() => onPage('editor')} />)}{shown.length === 0 && <div className="creation-empty"><Sparkles size={21} /><strong>{studio?.loading ? 'Loading your creations…' : 'No creations yet'}</strong><small>{studio?.error ? 'Run the CEZIK database migration, then refresh this page.' : 'Generated videos, images, voiceovers, and edits will live here.'}</small></div>}<button className="new-card" onClick={() => onPage('generate')}><span><Plus size={22} /></span><strong>Start a new project</strong><small>Bring your next idea to life</small></button></div>
+    <div className="projects-grid">{shown.map((project) => <ProjectCard key={project.id} project={project} />)}{shown.length === 0 && <div className="creation-empty"><Sparkles size={21} /><strong>{studio?.loading ? 'Loading your creations…' : 'No creations yet'}</strong><small>{studio?.error ? 'Your creations could not be loaded. Please refresh and try again.' : 'Generated videos and images will appear here.'}</small></div>}<button className="new-card" onClick={() => onPage('generate')}><span><Plus size={22} /></span><strong>Start a new project</strong><small>Bring your next idea to life</small></button></div>
   </div></Shell>
 }
 
 const pillOptions = { style: ['Cinematic', 'Product film', 'Animation', 'Documentary'], ratio: ['16:9', '9:16', '1:1', '4:5'], duration: ['5 seconds', '10 seconds', '15 seconds'], quality: ['Standard', 'High', 'Ultra 4K'] }
 function Generator({ onPage }: { onPage: (p: Page) => void }) {
-  const [prompt, setPrompt] = useState('A solitary astronaut walking through a field of tall grass on an alien planet at sunrise, cinematic, volumetric light.')
+  const [prompt, setPrompt] = useState('')
   const [selected, setSelected] = useState<Record<string, string>>({ style: 'Cinematic', ratio: '16:9', duration: '10 seconds', quality: 'High' })
   const [feedback, setFeedback] = useState<{ type: 'error' | 'success' | 'info'; title: string; detail: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -334,7 +377,7 @@ const imageSizes = [
 ]
 
 function ImageGenerator({ onPage }: { onPage: (p: Page) => void }) {
-  const [prompt, setPrompt] = useState('A luminous glass pavilion emerging from a misty tropical forest at dawn, editorial architecture photography, soft cinematic light.')
+  const [prompt, setPrompt] = useState('')
   const [size, setSize] = useState('1024x1024')
   const [submitting, setSubmitting] = useState(false)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
@@ -535,14 +578,52 @@ function NativeImageTool({ kind, onPage }: { kind: NativeToolKind; onPage: (p: P
   </div></Shell>
 }
 
+function Billing({ onPage }: { onPage: (p: Page) => void }) {
+  const studio = useStudio()
+  const packages = studio?.data?.packages ?? []
+  const purchases = studio?.data?.purchases ?? []
+  const transactions = studio?.data?.transactions ?? []
+  return <Shell page="billing" onPage={onPage} title="Billing & credits"><div className="content billing-page">
+    <section className="page-head"><div><span className="overline">CEZIK CREDITS</span><h1>Billing & credits</h1><p>Manage credit purchases and review your verified activity.</p></div><div className="balance-panel"><span>Available now</span><strong>{studio?.loading ? '…' : studio?.data?.balance.toLocaleString() ?? '—'}</strong><small>credits</small></div></section>
+    {studio?.error ? <div className="data-state error"><X size={18} /><div><strong>Billing data is unavailable</strong><p>{studio.error}</p></div><Button variant="ghost" onClick={() => void studio?.refresh()}>Try again</Button></div> : <><section className="billing-section"><div className="section-heading"><div><h2>Add credits</h2><p>Package values are configured and verified on CEZIK’s server.</p></div></div><div className="package-grid">{studio?.loading ? <div className="package-loading">Loading available credit packages…</div> : packages.length ? packages.map((creditPackage) => <article className="package-card" key={creditPackage.id}><span>{creditPackage.name}</span><strong>{creditPackage.credits.toLocaleString()} <i>credits</i></strong><p>{creditPackage.description}</p><b>{new Intl.NumberFormat(undefined, { style: 'currency', currency: creditPackage.currency }).format(Number(creditPackage.price))}</b><PayPalCheckoutButton creditPackage={creditPackage} onComplete={() => void studio?.refresh()} /></article>) : <div className="package-loading">No credit packages are available right now.</div>}</div></section>
+    <section className="billing-history"><div><h2>Recent credit activity</h2><p>Only successful, server-recorded ledger entries appear here.</p></div>{transactions.length ? <div className="activity-list">{transactions.map((transaction) => <div key={transaction.id}><div><strong>{transaction.description}</strong><small>{new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(transaction.created_at))}</small></div><span className={transaction.amount > 0 ? 'positive' : ''}>{transaction.amount > 0 ? '+' : ''}{transaction.amount.toLocaleString()} credits</span></div>)}</div> : <div className="data-state"><History size={18} /><div><strong>No credit activity yet</strong><p>Your purchases and generation usage will appear after they are processed.</p></div></div>}</section>
+    <section className="billing-history"><div><h2>Purchase history</h2><p>Payment status is refreshed after PayPal verification.</p></div>{purchases.length ? <div className="activity-list">{purchases.map((purchase) => <div key={purchase.id}><div><strong>{purchase.credit_packages?.name ?? 'Credit package'} · {purchase.credit_amount.toLocaleString()} credits</strong><small>{new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(purchase.created_at))}</small></div><span>{purchase.status}</span></div>)}</div> : <div className="data-state"><CreditCard size={18} /><div><strong>No purchases yet</strong><p>Completed and pending credit purchases will appear here.</p></div></div>}</section></>}
+  </div></Shell>
+}
+
+function Account({ onPage }: { onPage: (p: Page) => void }) {
+  const account = useAccount()
+  const studio = useStudio()
+  const profile = studio?.data?.profile
+  const createdAt = profile?.created_at ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(profile.created_at)) : null
+  return <Shell page="account" onPage={onPage} title="Account"><div className="content account-page"><section className="page-head"><div><span className="overline">ACCOUNT</span><h1>Your account</h1><p>Authenticated account information from your CEZIK profile.</p></div></section><section className="account-card"><span className="account-avatar">{account?.initials ?? 'CE'}</span><div><span className="overline">PROFILE</span><h2>{account?.displayName ?? 'Name unavailable'}</h2><p>{account?.email ?? 'Email unavailable'}</p>{createdAt && <small>Joined CEZIK {createdAt}</small>}</div></section><section className="settings-list"><button onClick={() => onPage('settings')}><span><Settings size={18} /><div><strong>Settings & security</strong><small>Reset your password or sign out securely.</small></div></span><ArrowRight size={17} /></button><button onClick={() => onPage('billing')}><span><CreditCard size={18} /><div><strong>Billing & credits</strong><small>Review purchases and manage your available credits.</small></div></span><ArrowRight size={17} /></button></section></div></Shell>
+}
+
+function SettingsPage({ onPage }: { onPage: (p: Page) => void }) {
+  const account = useAccount()
+  const [message, setMessage] = useState<string | null>(null)
+  const [working, setWorking] = useState(false)
+  const sendReset = async () => {
+    if (!supabase || !account?.email) return
+    setWorking(true); setMessage(null)
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(account.email, { redirectTo: window.location.origin })
+      setMessage(error ? error.message : 'Password reset instructions were sent to your email address.')
+    } catch {
+      setMessage('Password reset instructions could not be sent. Please try again.')
+    } finally { setWorking(false) }
+  }
+  const signOut = async () => {
+    setWorking(true); setMessage(null)
+    const error = await account?.signOut()
+    if (error) { setMessage(error.message); setWorking(false); return }
+    onPage('welcome')
+  }
+  return <Shell page="settings" onPage={onPage} title="Settings"><div className="content settings-page"><section className="page-head"><div><span className="overline">SETTINGS</span><h1>Account settings</h1><p>Only controls backed by your current account are shown here.</p></div></section><section className="settings-list"><button onClick={() => onPage('account')}><span><UserRound size={18} /><div><strong>Account details</strong><small>View the name and email stored in your CEZIK profile.</small></div></span><ArrowRight size={17} /></button><div className="settings-action"><span><ShieldCheck size={18} /><div><strong>Password</strong><small>Send a secure password reset link to {account?.email ?? 'your email'}.</small></div></span><Button variant="ghost" onClick={() => void sendReset()} disabled={working || !account?.email}>Send reset link</Button></div><div className="settings-action"><span><LogOut size={18} /><div><strong>Sign out</strong><small>End this browser session.</small></div></span><Button variant="ghost" onClick={() => void signOut()} disabled={working}>Sign out</Button></div></section>{message && <div className="data-state"><Mail size={18} /><div><strong>Security update</strong><p>{message}</p></div></div>}</div></Shell>
+}
+
 function Editor({ onPage }: { onPage: (p: Page) => void }) {
-  const [playing, setPlaying] = useState(false); const [activeTool, setActiveTool] = useState('AI edit')
-  const aiTools = [['AI edit', WandSparkles], ['Remove background', Layers3], ['Extend video', ArrowRight], ['AI voiceover', Music2], ['Generate subtitles', FileVideo], ['Improve quality', Zap], ['Add music', Music2], ['AI effects', Sparkles]] as const
-  return <Shell page="editor" onPage={onPage} editor><div className="editor-top"><button onClick={() => onPage('projects')}><ArrowRight size={18} className="back" /> Projects</button><strong>Neon City</strong><span>Edited just now</span><div><Button variant="ghost"><Download size={16} /> Export</Button><Button><Upload size={16} /> Share</Button></div></div><div className="editor-workspace">
-    <aside className="asset-panel"><div className="asset-tabs"><button className="active"><Image size={17} /> Media</button><button><Music2 size={17} /> Audio</button></div><div className="asset-heading"><strong>Project media</strong><button><Plus size={16} /></button></div><button className="media-upload"><Upload size={20} /><strong>Import media</strong><small>Images, video, audio</small></button><div className="media-grid"><div className="media-item m1"><Play size={14} fill="white" /></div><div className="media-item m2" /><div className="media-item m3" /><div className="media-item m4" /></div></aside>
-    <section className="preview-section"><div className="preview-toolbar"><button><Menu size={17} /></button><span>Scene 01</span><div><button>Fit <ChevronDown size={13} /></button><button><MoreHorizontal size={17} /></button></div></div><div className="preview-frame"><div className="video-art"><div className="sun-orb" /><div className="city-lines"><i /><i /><i /><i /><i /></div><div className="video-title">CREATE<br /><span>WITHOUT LIMITS</span></div><div className="video-stamp">CEZIK<br />STUDIOS</div></div><button className="big-play" onClick={() => setPlaying(!playing)}>{playing ? <span className="pause" /> : <Play size={24} fill="currentColor" />}</button><span className="preview-time">00:00:07 / 00:00:24</span></div><div className="transport"><button onClick={() => setPlaying(!playing)}>{playing ? <span className="pause dark" /> : <Play size={18} fill="currentColor" />}</button><button><span className="volume">◖</span></button><span>00:00:07</span><div className="transport-line"><b /></div><span>00:00:24</span><button><Settings size={16} /></button></div></section>
-    <aside className="ai-panel"><div className="ai-head"><span><Sparkles size={17} /> AI tools</span><button><X size={17} /></button></div><div className="ai-prompt"><textarea placeholder="Tell CEZIK what to change..." /><Button><ArrowRight size={16} /></Button></div><span className="suggestion-label">QUICK ACTIONS</span><div className="ai-tool-list">{aiTools.map(([name, Icon]) => <button onClick={() => setActiveTool(name)} className={activeTool === name ? 'selected' : ''} key={name}><span><Icon size={16} /></span>{name}<ArrowRight size={15} /></button>)}</div></aside>
-  </div><section className="timeline"><div className="timeline-head"><div><button><Plus size={16} /></button><button><SlidersHorizontal size={16} /></button><span>00:00</span></div><div><button><span className="mag">−</span></button><input type="range" defaultValue="42" /><button><span className="mag">+</span></button></div></div><div className="ruler"><span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span><span>00:20</span></div><div className="track-area"><div className="track-label"><Video size={15} /> Video 1</div><div className="track clip-main"><b className="playhead" /><div className="mini-frames">✦　　◒　　□　　✦　　◒　　□</div></div><div className="track-label"><Music2 size={15} /> Audio 1</div><div className="track audio-track"><div className="audio-wave">∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿</div></div></div></section></Shell>
+  return <Shell page="editor" onPage={onPage} title="AI Video Editor"><div className="content upcoming-page"><Clapperboard size={28} /><span className="overline">COMING SOON</span><h1>AI video editing is not available yet.</h1><p>The prior editor screen was a visual prototype with no project, media, export, or AI-editing backend. It has been replaced with this honest availability state until those services are connected.</p><div><Button onClick={() => onPage('projects')}>View creations</Button><Button variant="ghost" onClick={() => onPage('generate')}>Try video generation</Button></div></div></Shell>
 }
 
 function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode; onModeChange: (mode: AuthMode) => void; onBack: () => void; onSuccess: () => void }) {
@@ -617,32 +698,51 @@ function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode;
 }
 
 function App() {
-  const [page, setPage] = useState<Page>('welcome')
+  const [page, setPage] = useState<Page>(() => pageForPath(window.location.pathname))
   const [authMode, setAuthMode] = useState<AuthMode>('signin')
   const [session, setSession] = useState<Session | null>(null)
   const [authReady, setAuthReady] = useState(!supabase)
   const [studioData, setStudioData] = useState<StudioData | null>(null)
   const [studioLoading, setStudioLoading] = useState(false)
   const [studioError, setStudioError] = useState<string | null>(null)
-  const displayName = session?.user.user_metadata.full_name || session?.user.email?.split('@')[0] || 'Creator'
+  const studioRequestRef = useRef(0)
+  const intendedPageRef = useRef<Page | null>(null)
+  const displayName = studioData?.profile?.display_name || session?.user.user_metadata.full_name || null
+  const email = studioData?.profile?.email || session?.user.email || null
 
+  useEffect(() => {
+    const onPopState = () => {
+      if (!isKnownPath(window.location.pathname)) window.history.replaceState({}, '', pagePaths.welcome)
+      setPage(pageForPath(window.location.pathname))
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+  useEffect(() => {
+    if (!isKnownPath(window.location.pathname)) window.history.replaceState({}, '', pagePaths.welcome)
+  }, [])
   useEffect(() => { window.scrollTo({ top: 0 }) }, [page])
   const refreshStudio = useCallback(async () => {
     if (!supabase || !session) return
+    const requestId = ++studioRequestRef.current
     setStudioLoading(true)
     setStudioError(null)
     try {
-      setStudioData(await loadStudioData(supabase))
+      const data = await loadStudioData(supabase)
+      if (requestId === studioRequestRef.current) setStudioData(data)
     } catch (error) {
-      setStudioData(null)
-      setStudioError(error instanceof Error ? error.message : 'Your studio data could not be loaded.')
+      if (requestId === studioRequestRef.current) {
+        setStudioData(null)
+        setStudioError(error instanceof Error ? error.message : 'Your studio data could not be loaded.')
+      }
     } finally {
-      setStudioLoading(false)
+      if (requestId === studioRequestRef.current) setStudioLoading(false)
     }
   }, [session])
 
   useEffect(() => {
     if (!session) {
+      studioRequestRef.current += 1
       setStudioData(null)
       setStudioError(null)
       setStudioLoading(false)
@@ -654,39 +754,86 @@ function App() {
   useEffect(() => {
     if (!supabase) return
     let mounted = true
-    supabase.auth.getSession().then(({ data }) => { if (mounted) { setSession(data.session); setAuthReady(true) } })
+    let authEventReceived = false
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted && !authEventReceived) { setSession(data.session); setAuthReady(true) }
+    }).catch(() => { if (mounted && !authEventReceived) setAuthReady(true) })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return
+      authEventReceived = true
       setSession(nextSession)
       setAuthReady(true)
-      if (nextSession) setPage((current) => current === 'welcome' || current === 'auth' ? 'home' : current)
+      if (nextSession) setPage((current) => {
+        const destination = intendedPageRef.current ?? (current === 'welcome' || current === 'auth' ? 'home' : current)
+        intendedPageRef.current = null
+        window.history.replaceState({}, '', pagePaths[destination])
+        return destination
+      })
+      else {
+        window.history.replaceState({}, '', '/')
+        setPage('welcome')
+      }
     })
     return () => { mounted = false; subscription.unsubscribe() }
   }, [])
 
-  const beginAuth = (mode: AuthMode) => { setAuthMode(mode); setPage('auth') }
-  const navigate = (nextPage: Page) => {
-    if (nextPage !== 'welcome' && nextPage !== 'auth' && !session) beginAuth('signin')
-    else setPage(nextPage)
+  const setPageWithHistory = (nextPage: Page, replace = false) => {
+    const nextPath = pagePaths[nextPage]
+    if (window.location.pathname !== nextPath) window.history[replace ? 'replaceState' : 'pushState']({}, '', nextPath)
+    setPage(nextPage)
   }
+  const beginAuth = (mode: AuthMode) => { setAuthMode(mode); setPageWithHistory('auth') }
+  const navigate = (nextPage: Page) => {
+    if (nextPage !== 'welcome' && nextPage !== 'auth' && !session) {
+      intendedPageRef.current = nextPage
+      beginAuth('signin')
+    }
+    else setPageWithHistory(nextPage)
+  }
+  const signOut = async () => {
+    if (!supabase) return new Error('Authentication is not configured.')
+    const { error } = await supabase.auth.signOut()
+    return error
+  }
+  const protectedRoute = page !== 'welcome' && page !== 'auth'
+  useEffect(() => {
+    if (authReady && !session && protectedRoute) {
+      intendedPageRef.current = page
+      setAuthMode('signin')
+      setPageWithHistory('auth', true)
+    }
+  }, [authReady, session, protectedRoute])
   if (!authReady) return <div className="auth-loading"><Logo /><span>Preparing your studio…</span></div>
   const studio = { data: studioData, loading: studioLoading, error: studioError, refresh: refreshStudio }
-  const screen = page === 'welcome'
+  const onAuthSuccess = () => {
+    const destination = intendedPageRef.current ?? 'home'
+    intendedPageRef.current = null
+    setPageWithHistory(destination, true)
+  }
+  const screen = !session && protectedRoute
+    ? <AuthScreen mode="signin" onModeChange={setAuthMode} onBack={() => setPageWithHistory('welcome')} onSuccess={onAuthSuccess} />
+    : page === 'welcome'
     ? <Welcome onAuth={beginAuth} onExplore={() => navigate('editor')} />
-    : page === 'auth'
-      ? <AuthScreen mode={authMode} onModeChange={setAuthMode} onBack={() => setPage('welcome')} onSuccess={() => setPage('home')} />
+      : page === 'auth'
+      ? <AuthScreen mode={authMode} onModeChange={setAuthMode} onBack={() => setPageWithHistory('welcome')} onSuccess={onAuthSuccess} />
       : page === 'home'
-        ? <Dashboard onPage={navigate} name={displayName} />
+        ? <Dashboard onPage={navigate} />
         : page === 'projects'
           ? <Projects onPage={navigate} />
-        : page === 'generate'
+          : page === 'billing'
+            ? <Billing onPage={navigate} />
+            : page === 'account'
+              ? <Account onPage={navigate} />
+              : page === 'settings'
+                ? <SettingsPage onPage={navigate} />
+          : page === 'generate'
           ? <Generator onPage={navigate} />
           : page === 'image'
             ? <ImageGenerator onPage={navigate} />
             : page === 'background-remover' || page === 'image-compressor' || page === 'image-resizer' || page === 'image-converter'
               ? <NativeImageTool kind={page} onPage={navigate} />
               : <Editor onPage={navigate} />
-  return <StudioContext.Provider value={studio}>{screen}</StudioContext.Provider>
+  return <StudioContext.Provider value={studio}><AccountContext.Provider value={{ displayName, email, initials: displayInitials(displayName, email), signOut }}>{screen}</AccountContext.Provider></StudioContext.Provider>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
