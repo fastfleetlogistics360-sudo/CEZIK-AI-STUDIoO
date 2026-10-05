@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { resolveImageGenerationProvider, type ImageSize } from '../_shared/image-providers.ts'
+import { makeWatermarkedImageAsset } from '../_shared/watermark.ts'
 
 type WorkerRequest = { jobId?: string }
 
@@ -77,16 +78,19 @@ Deno.serve(async (request) => {
       jobId: job.id,
       userId: job.user_id,
     })
-    const storagePath = `${job.user_id}/${job.id}/image.${result.extension}`
-    const { error: storageError } = await admin.storage.from('cezik-creations').upload(storagePath, result.bytes, {
-      contentType: result.contentType,
+    const deliveredAsset = job.watermark_required
+      ? makeWatermarkedImageAsset(result.bytes, result.contentType, size)
+      : result
+    const storagePath = `${job.user_id}/${job.id}/image.${deliveredAsset.extension}`
+    const { error: storageError } = await admin.storage.from('cezik-creations').upload(storagePath, deliveredAsset.bytes, {
+      contentType: deliveredAsset.contentType,
       upsert: false,
     })
     if (storageError) throw new Error('The generated image could not be saved.')
 
     const { data: creation, error: completionError } = await admin.rpc('complete_ai_job', {
       p_job_id: job.id,
-      p_output_data: result.metadata,
+      p_output_data: { ...result.metadata, watermark_required: Boolean(job.watermark_required) },
       p_title: prompt.length > 72 ? `${prompt.slice(0, 69)}…` : prompt,
       p_creation_type: 'image',
       p_storage_path: storagePath,

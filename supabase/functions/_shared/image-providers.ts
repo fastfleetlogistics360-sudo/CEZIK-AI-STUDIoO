@@ -40,6 +40,10 @@ class OpenAIImageProvider implements ImageGenerationProvider {
         model: 'gpt-image-1',
         prompt: request.prompt,
         size: request.size,
+        // Premium and pack prices are based on the documented low-quality
+        // rate. Never rely on the provider's variable default quality when
+        // deciding customer entitlement or unit economics.
+        quality: 'low',
         output_format: request.outputFormat,
       }),
     })

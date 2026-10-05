@@ -10,3 +10,6 @@ verify_jwt = false
 # signature before it performs any database change.
 [functions.billing-webhook]
 verify_jwt = false
+
+[functions.create-paypal-premium-subscription]
+verify_jwt = true

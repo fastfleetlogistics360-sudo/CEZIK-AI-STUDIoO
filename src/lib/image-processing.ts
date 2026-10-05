@@ -86,6 +86,26 @@ export async function convertImage(file: File, format: OutputFormat) {
   return canvasToBlob(canvas, format, format === 'image/png' ? undefined : 0.92)
 }
 
+/** Applies CEZIK's free-plan watermark to browser-only tool exports. */
+export async function addCezikWatermark(file: Blob, format: OutputFormat) {
+  const canvas = await drawImage(file)
+  const context = canvas.getContext('2d', { alpha: true })
+  if (!context) throw new Error('Your browser could not prepare the watermark.')
+  const fontSize = Math.max(18, Math.round(Math.min(canvas.width, canvas.height) * 0.042))
+  context.save()
+  context.translate(canvas.width / 2, canvas.height / 2)
+  context.rotate(-Math.PI / 7)
+  context.fillStyle = 'rgba(255, 255, 255, 0.30)'
+  context.font = `700 ${fontSize}px Arial, sans-serif`
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  for (let y = -canvas.height; y <= canvas.height; y += fontSize * 4) {
+    for (let x = -canvas.width; x <= canvas.width; x += fontSize * 8) context.fillText('CEZIK AI', x, y)
+  }
+  context.restore()
+  return canvasToBlob(canvas, format, format === 'image/png' ? undefined : 0.92)
+}
+
 export async function removeBackground(file: File, onProgress?: (percent: number) => void) {
   const source = URL.createObjectURL(file)
   try {

@@ -16,6 +16,15 @@ export type PayPalOrder = {
   }>
 }
 
+export type PayPalSubscription = {
+  id: string
+  status: string
+  custom_id?: string
+  start_time?: string
+  billing_info?: { next_billing_time?: string; last_payment?: { time?: string } }
+  links?: Array<{ href?: string; rel?: string }>
+}
+
 export class PayPalClientError extends Error {
   constructor(public readonly code: string, message: string, public readonly retryable = false) {
     super(message)
@@ -107,6 +116,32 @@ export async function getPayPalOrder(orderId: string) {
     method: 'GET',
     headers: { Prefer: 'return=representation' },
   }) as Promise<PayPalOrder>
+}
+
+export async function createPayPalSubscription(input: {
+  localSubscriptionId: string
+  planId: string
+  returnUrl: string
+  cancelUrl: string
+}) {
+  return await paypalFetch('/v1/billing/subscriptions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'PayPal-Request-Id': input.localSubscriptionId, Prefer: 'return=representation' },
+    body: JSON.stringify({
+      plan_id: input.planId,
+      custom_id: input.localSubscriptionId,
+      application_context: {
+        brand_name: 'CEZIK AI Studio', user_action: 'SUBSCRIBE_NOW', shipping_preference: 'NO_SHIPPING',
+        return_url: input.returnUrl, cancel_url: input.cancelUrl,
+      },
+    }),
+  }) as Promise<PayPalSubscription>
+}
+
+export async function getPayPalSubscription(subscriptionId: string) {
+  return await paypalFetch(`/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+    method: 'GET', headers: { Prefer: 'return=representation' },
+  }) as Promise<PayPalSubscription>
 }
 
 export async function verifyPayPalWebhook(input: {

@@ -19,8 +19,16 @@ export type Creation = {
   storage_path: string | null
   preview_path: string | null
   metadata: Record<string, unknown>
+  watermark_required: boolean
+  entitlement_source: string | null
   created_at: string
   assetUrl: string | null
+}
+
+export type Subscription = {
+  status: 'approval_pending' | 'active' | 'past_due' | 'suspended' | 'cancelled' | 'expired'
+  current_period_end: string | null
+  subscription_plans: { name: string; included_credits: number } | null
 }
 
 export type CreditPackage = {
@@ -68,6 +76,7 @@ export type StudioData = {
   packages: CreditPackage[]
   purchases: CreditPurchase[]
   transactions: CreditTransaction[]
+  subscription: Subscription | null
 }
 
 const emptyStudioData: StudioData = {
@@ -79,20 +88,22 @@ const emptyStudioData: StudioData = {
   packages: [],
   purchases: [],
   transactions: [],
+  subscription: null,
 }
 
 export async function loadStudioData(client: SupabaseClient): Promise<StudioData> {
-  const [profile, wallet, activity, creations, packages, purchases, transactions] = await Promise.all([
+  const [profile, wallet, activity, creations, packages, purchases, transactions, subscriptions] = await Promise.all([
     client.from('profiles').select('display_name, email, created_at').maybeSingle(),
     client.from('credit_wallets').select('balance').maybeSingle(),
     client.from('ai_activities').select('id, slug, name, description, credit_cost, provider, enabled').in('slug', ['video-generation', 'image-generation']),
-    client.from('creations').select('id, title, type, status, storage_bucket, storage_path, preview_path, metadata, created_at').order('created_at', { ascending: false }).limit(24),
+    client.from('creations').select('id, title, type, status, storage_bucket, storage_path, preview_path, metadata, watermark_required, entitlement_source, created_at').order('created_at', { ascending: false }).limit(24),
     client.from('credit_packages').select('id, name, credits, price, currency, description, sort_order').eq('active', true).order('sort_order'),
     client.from('credit_purchases').select('id, credit_amount, amount, currency, provider, status, created_at, credit_packages(name)').order('created_at', { ascending: false }).limit(8),
     client.from('credit_transactions').select('id, type, amount, balance_after, description, created_at').order('created_at', { ascending: false }).limit(12),
+    client.from('user_subscriptions').select('status, current_period_end, subscription_plans(name, included_credits)').in('status', ['approval_pending', 'active', 'past_due', 'suspended']).order('created_at', { ascending: false }).limit(1),
   ])
 
-  const errors = [profile.error, wallet.error, activity.error, creations.error, packages.error, purchases.error, transactions.error].filter(Boolean)
+  const errors = [profile.error, wallet.error, activity.error, creations.error, packages.error, purchases.error, transactions.error, subscriptions.error].filter(Boolean)
   if (errors.length > 0) throw errors[0]
 
   const creationRows = creations.data ?? []
@@ -115,6 +126,9 @@ export async function loadStudioData(client: SupabaseClient): Promise<StudioData
       credit_packages: Array.isArray(purchase.credit_packages) ? purchase.credit_packages[0] ?? null : purchase.credit_packages,
     })) as CreditPurchase[],
     transactions: (transactions.data ?? []) as CreditTransaction[],
+    subscription: (subscriptions.data?.[0]
+      ? { ...subscriptions.data[0], subscription_plans: Array.isArray(subscriptions.data[0].subscription_plans) ? subscriptions.data[0].subscription_plans[0] ?? null : subscriptions.data[0].subscription_plans }
+      : null) as Subscription | null,
   }
 }
 

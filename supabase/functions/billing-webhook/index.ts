@@ -1,11 +1,16 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { PayPalClientError, verifyPayPalWebhook } from '../_shared/paypal.ts'
+import { getPayPalSubscription, PayPalClientError, verifyPayPalWebhook } from '../_shared/paypal.ts'
 
 type PayPalWebhook = {
   id?: string
   event_type?: string
   create_time?: string
-  resource?: { id?: string; amount?: { value?: string; currency_code?: string }; supplementary_data?: { related_ids?: { order_id?: string } } }
+  resource?: {
+    id?: string; status?: string; billing_agreement_id?: string; subscription_id?: string
+    amount?: { value?: string; currency_code?: string }
+    billing_info?: { next_billing_time?: string; last_payment?: { time?: string } }
+    supplementary_data?: { related_ids?: { order_id?: string } }
+  }
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -80,6 +85,29 @@ Deno.serve(async (request) => {
         p_purchase_id: purchase.id, p_paypal_order_id: orderId, p_paypal_capture_id: captureId, p_amount: amount, p_currency: currency,
       })
       if (creditError) throw new Error('Could not confirm credit purchase')
+    } else if (event.event_type.startsWith('BILLING.SUBSCRIPTION.') || event.event_type.startsWith('PAYMENT.SALE.')) {
+      const providerSubscriptionId = event.resource?.id && event.event_type.startsWith('BILLING.SUBSCRIPTION.')
+        ? event.resource.id
+        : event.resource?.billing_agreement_id ?? event.resource?.subscription_id
+      if (!providerSubscriptionId) throw new Error('Missing PayPal subscription ID')
+      const { data: localSubscription, error: subscriptionError } = await admin.from('user_subscriptions')
+        .select('id').eq('provider', 'paypal').eq('provider_subscription_id', providerSubscriptionId).maybeSingle()
+      if (subscriptionError || !localSubscription) {
+        await admin.from('billing_webhook_events').update({ processing_status: 'ignored', processed_at: new Date().toISOString() }).eq('provider_event_id', event.id).eq('provider', 'paypal').eq('environment', 'sandbox')
+        return json({ status: 'ignored' })
+      }
+      const verifiedSubscription = await getPayPalSubscription(providerSubscriptionId)
+      const statusMap: Record<string, string> = { ACTIVE: 'active', SUSPENDED: 'suspended', CANCELLED: 'cancelled', EXPIRED: 'expired' }
+      const status = statusMap[verifiedSubscription.status] ?? 'past_due'
+      const periodEnd = verifiedSubscription.billing_info?.next_billing_time ?? null
+      await admin.from('user_subscriptions').update({
+        status, current_period_end: periodEnd, provider_metadata: { paypal_status: verifiedSubscription.status },
+      }).eq('id', localSubscription.id)
+      if (status === 'active' && (event.event_type === 'BILLING.SUBSCRIPTION.ACTIVATED' || event.event_type === 'PAYMENT.SALE.COMPLETED')) {
+        const periodKey = verifiedSubscription.billing_info?.last_payment?.time ?? verifiedSubscription.billing_info?.next_billing_time ?? event.id
+        const { error: allowanceError } = await admin.rpc('grant_subscription_allowance', { p_provider_subscription_id: providerSubscriptionId, p_period_key: periodKey })
+        if (allowanceError) throw new Error('Could not grant Premium allowance')
+      }
     } else if (event.event_type === 'PAYMENT.CAPTURE.DENIED' || event.event_type === 'CHECKOUT.PAYMENT-APPROVAL.REVERSED') {
       if (orderId) await admin.from('credit_purchases').update({ status: 'failed' })
         .eq('provider', 'paypal').eq('paypal_order_id', orderId).in('status', ['created', 'approved', 'captured'])

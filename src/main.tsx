@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { isActivityAvailable, loadStudioData, type Creation, type CreditPackage, type StudioData } from './lib/cezik'
-import { acceptedImageTypes, compressImage, convertImage, extensionByType, filenameFor, formatBytes, readImageDetails, removeBackground, resizeImage, validateImageFile, type ImageDetails, type OutputFormat } from './lib/image-processing'
+import { acceptedImageTypes, addCezikWatermark, compressImage, convertImage, extensionByType, filenameFor, formatBytes, readImageDetails, removeBackground, resizeImage, validateImageFile, type ImageDetails, type OutputFormat } from './lib/image-processing'
 import './styles.css'
 import './neon.css'
 import './image-generator.css'
@@ -426,6 +426,7 @@ function ImageGenerator({ onPage }: { onPage: (p: Page) => void }) {
   const [size, setSize] = useState('1024x1024')
   const [submitting, setSubmitting] = useState(false)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const [resultWatermarked, setResultWatermarked] = useState(false)
   const [feedback, setFeedback] = useState<{ type: 'error' | 'success' | 'info'; title: string; detail: string } | null>(null)
   const studio = useStudio()
   const activity = studio?.data?.imageActivity ?? null
@@ -478,8 +479,9 @@ function ImageGenerator({ onPage }: { onPage: (p: Page) => void }) {
       const { data: signedAsset, error: signedAssetError } = await supabase.storage.from('cezik-creations').createSignedUrl(storagePath, 60 * 60)
       if (signedAssetError || !signedAsset?.signedUrl) throw new Error('The image was created but could not be opened.')
       setResultUrl(signedAsset.signedUrl)
+      setResultWatermarked(Boolean(data?.creation?.watermark_required))
       await studio?.refresh()
-      setFeedback({ type: 'success', title: 'Your image is ready', detail: 'It is saved privately to My Creations and your credit balance has been updated.' })
+      setFeedback({ type: 'success', title: 'Your image is ready', detail: data?.creation?.watermark_required ? 'Your free generation has a transparent CEZIK watermark. Buy credits or upgrade for clean outputs.' : 'It is saved privately to My Creations and your credit balance has been updated.' })
     } catch (error) {
       setFeedback({ type: 'error', title: 'Your image could not be generated', detail: error instanceof Error ? error.message : 'Please try again. Any failed generation is refunded automatically.' })
     } finally {
@@ -491,10 +493,10 @@ function ImageGenerator({ onPage }: { onPage: (p: Page) => void }) {
     <section className="generator-head"><span className="overline"><Image size={13} /> CEZIK IMAGES</span><h1>Make the imagined <i>visible.</i></h1><p>Describe the visual, choose a composition, and create a private, downloadable image.</p></section>
     <section className="generator-credit-bar"><span><Sparkles size={15} /> Your CEZIK Credits</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><i>{cost ? `${cost} credits per image` : 'Run the image migration to load pricing'}</i></section>
     <div className="generator-layout"><section className="prompt-column"><div className="prompt-box"><div className="prompt-top"><span><WandSparkles size={16} /> Your prompt</span><small>{prompt.length} / 2,000</small></div><textarea maxLength={2000} value={prompt} onChange={(event) => setPrompt(event.target.value)} /><div className="prompt-bottom"><span>Images are generated securely and stored in your private workspace.</span></div></div>
-      {resultUrl ? <section className="image-result"><div className="image-result-head"><span><CheckCircle2 size={16} /> Latest generation</span><div><Button variant="ghost" onClick={() => void downloadImage(resultUrl, 'cezik-image.png')}><Download size={15} /> Download</Button><Button variant="ghost" onClick={generateImage} disabled={submitting}><RefreshCw size={15} /> Regenerate</Button></div></div><img src={resultUrl} alt={prompt} /></section> : <div className="generation-note"><span>✦</span><p>Your completed images are saved privately to <b>My Creations</b>.</p></div>}
+      {resultUrl ? <section className="image-result"><div className="image-result-head"><span><CheckCircle2 size={16} /> Latest generation{resultWatermarked ? ' · Free export' : ''}</span><div><Button variant="ghost" onClick={() => void downloadImage(resultUrl, resultWatermarked ? 'cezik-image-watermarked.svg' : 'cezik-image.png')}><Download size={15} /> Download</Button><Button variant="ghost" onClick={generateImage} disabled={submitting}><RefreshCw size={15} /> Regenerate</Button></div></div><img src={resultUrl} alt={prompt} /></section> : <div className="generation-note"><span>✦</span><p>Your completed images are saved privately to <b>My Creations</b>.</p></div>}
     </section><aside className="settings-card"><h3>Image settings</h3><div className="setting"><label>Composition</label><div className="pills">{imageSizes.map((option) => <button onClick={() => setSize(option.value)} key={option.value} className={size === option.value ? 'selected' : ''}><i className={`ratio ${option.className}`} />{option.label}</button>)}</div></div><p className="setting-note">Quality, style, and multi-image controls will be added only when the selected provider supports them.</p><Button className="generate-button" onClick={generateImage} disabled={submitting}><Image size={17} /> {submitting ? 'Generating image…' : available ? 'Generate image' : 'Image generation unavailable'} <span>{cost ? `${cost} credits` : '—'}</span></Button></aside></div>
     {feedback && <div className={`generated-toast ${feedback.type}`}><span>{feedback.type === 'error' ? <X size={18} /> : <Sparkles size={18} />}</span><div><strong>{feedback.title}</strong><p>{feedback.detail}</p></div>{feedback.type === 'success' && <button onClick={() => onPage('projects')}>View creations <ArrowRight size={15} /></button>}</div>}
-    <section className="image-history"><div className="section-heading"><div><h2>Image history</h2><p>Your most recent private generations</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></div><div className="image-history-grid">{imageHistory.length ? imageHistory.slice(0, 6).map((creation) => <article key={creation.id} className="image-history-card">{creation.assetUrl ? <img src={creation.assetUrl} alt={creation.title} /> : <div className="image-history-empty"><Image size={20} /></div>}<span>{creation.title}</span>{creation.assetUrl && <button onClick={() => void downloadImage(creation.assetUrl!, 'cezik-image.png')} aria-label={`Download ${creation.title}`}><Download size={15} /></button>}</article>) : <div className="creation-empty"><Image size={21} /><strong>No images yet</strong><small>Your completed image generations will appear here.</small></div>}</div></section>
+    <section className="image-history"><div className="section-heading"><div><h2>Image history</h2><p>Your most recent private generations</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></div><div className="image-history-grid">{imageHistory.length ? imageHistory.slice(0, 6).map((creation) => <article key={creation.id} className="image-history-card">{creation.assetUrl ? <img src={creation.assetUrl} alt={creation.title} /> : <div className="image-history-empty"><Image size={20} /></div>}<span>{creation.title}</span>{creation.assetUrl && <button onClick={() => void downloadImage(creation.assetUrl!, creation.watermark_required ? 'cezik-image-watermarked.svg' : 'cezik-image.png')} aria-label={`Download ${creation.title}`}><Download size={15} /></button>}</article>) : <div className="creation-empty"><Image size={21} /><strong>No images yet</strong><small>Your completed image generations will appear here.</small></div>}</div></section>
   </div></Shell>
 }
 
@@ -508,6 +510,7 @@ const nativeToolCopy: Record<NativeToolKind, { title: string; accent: string; de
 }
 
 function NativeImageTool({ kind, onPage }: { kind: NativeToolKind; onPage: (p: Page) => void }) {
+  const studio = useStudio()
   const copy = nativeToolCopy[kind]
   const Icon = copy.icon
   const [file, setFile] = useState<File | null>(null)
@@ -525,6 +528,7 @@ function NativeImageTool({ kind, onPage }: { kind: NativeToolKind; onPage: (p: P
   const [lockedRatio, setLockedRatio] = useState(true)
   const sourceRef = useRef<string | null>(null)
   const resultRef = useRef<string | null>(null)
+  const watermarkRequired = studio?.data?.subscription?.status !== 'active'
 
   useEffect(() => () => {
     if (sourceRef.current) URL.revokeObjectURL(sourceRef.current)
@@ -578,11 +582,13 @@ function NativeImageTool({ kind, onPage }: { kind: NativeToolKind; onPage: (p: P
           : kind === 'image-resizer'
             ? await resizeImage(file, width, height, format)
             : await convertImage(file, format)
+      const outputType = kind === 'background-remover' ? 'image/png' : kind === 'image-compressor' && format === 'image/png' ? 'image/webp' : format
+      const deliveredOutput = watermarkRequired ? await addCezikWatermark(output, outputType) : output
       if (resultRef.current) URL.revokeObjectURL(resultRef.current)
-      const nextUrl = URL.createObjectURL(output)
+      const nextUrl = URL.createObjectURL(deliveredOutput)
       resultRef.current = nextUrl
       setResultUrl(nextUrl)
-      setResultDetails(await readImageDetails(output))
+      setResultDetails(await readImageDetails(deliveredOutput))
     } catch (processingError) {
       setError(processingError instanceof Error ? processingError.message : 'The image could not be processed. Please try another image.')
     } finally {
@@ -605,7 +611,7 @@ function NativeImageTool({ kind, onPage }: { kind: NativeToolKind; onPage: (p: P
   const acceptedFormats = acceptedImageTypes.join(',')
   return <Shell page={kind} onPage={onPage} title={copy.title.replace('.', '')}><div className="content native-tool-page">
     <section className="native-tool-head"><span className="overline"><Icon size={13} /> CEZIK NATIVE TOOLS</span><h1>{copy.title} <i>{copy.accent}</i></h1><p>{copy.description}</p></section>
-    <div className="native-private-note"><LockKeyhole size={16} /><span><strong>Private by default.</strong> Your image stays on this device. Nothing is sent to CEZIK storage and no credits are used.</span></div>
+    <div className="native-private-note"><LockKeyhole size={16} /><span><strong>Private by default.</strong> Your image stays on this device. Nothing is sent to CEZIK storage and no credits are used.{watermarkRequired ? ' Free exports include a transparent CEZIK watermark.' : ' Premium exports are clean.'}</span></div>
     <section className="native-tool-layout">
       <div className="native-workspace">
         <label className={`native-upload ${file ? 'has-file' : ''}`}><input type="file" accept={acceptedFormats} onChange={(event) => void chooseFile(event.target.files?.[0])} /><Upload size={22} /><strong>{file ? 'Choose a different image' : 'Choose an image'}</strong><small>JPG, PNG, or WebP · up to 12 MB</small></label>
@@ -628,9 +634,26 @@ function Billing({ onPage }: { onPage: (p: Page) => void }) {
   const packages = studio?.data?.packages ?? []
   const purchases = studio?.data?.purchases ?? []
   const transactions = studio?.data?.transactions ?? []
+  const subscription = studio?.data?.subscription ?? null
+  const [premiumMessage, setPremiumMessage] = useState<string | null>(null)
+  const [startingPremium, setStartingPremium] = useState(false)
+  const startPremium = async () => {
+    if (!supabase) return
+    setStartingPremium(true); setPremiumMessage(null)
+    try {
+      const { data, error } = await supabase.functions.invoke('create-paypal-premium-subscription', { method: 'POST' })
+      if (error || !data?.approveUrl) throw new Error(data?.error ?? 'Premium checkout could not be started.')
+      window.location.assign(data.approveUrl)
+    } catch (error) {
+      setPremiumMessage(error instanceof Error ? error.message : 'Premium checkout could not be started.')
+      setStartingPremium(false)
+    }
+  }
+  const premiumActive = subscription?.status === 'active'
   return <Shell page="billing" onPage={onPage} title="Billing & credits"><div className="content billing-page">
-    <section className="page-head"><div><span className="overline">CEZIK CREDITS</span><h1>Billing & credits</h1><p>Manage credit purchases and review your verified activity.</p></div><div className="balance-panel"><span>Available now</span><strong>{studio?.loading ? '…' : studio?.data?.balance.toLocaleString() ?? '—'}</strong><small>credits</small></div></section>
-    {studio?.error ? <div className="data-state error"><X size={18} /><div><strong>Billing data is unavailable</strong><p>{studio.error}</p></div><Button variant="ghost" onClick={() => void studio?.refresh()}>Try again</Button></div> : <><section className="billing-section"><div className="section-heading"><div><h2>Add credits</h2><p>Package values are configured and verified on CEZIK’s server.</p></div></div><div className="package-grid">{studio?.loading ? <div className="package-loading">Loading available credit packages…</div> : packages.length ? packages.map((creditPackage) => <article className="package-card" key={creditPackage.id}><span>{creditPackage.name}</span><strong>{creditPackage.credits.toLocaleString()} <i>credits</i></strong><p>{creditPackage.description}</p><b>{new Intl.NumberFormat(undefined, { style: 'currency', currency: creditPackage.currency }).format(Number(creditPackage.price))}</b><PayPalCheckoutButton creditPackage={creditPackage} onComplete={() => void studio?.refresh()} /></article>) : <div className="package-loading">No credit packages are available right now.</div>}</div></section>
+    <section className="page-head"><div><span className="overline">CEZIK CREDITS</span><h1>Billing & credits</h1><p>Use free credits with watermarked exports, buy clean-output credits when needed, or unlock Premium.</p></div><div className="balance-panel"><span>Available now</span><strong>{studio?.loading ? '…' : studio?.data?.balance.toLocaleString() ?? '—'}</strong><small>credits</small></div></section>
+    {studio?.error ? <div className="data-state error"><X size={18} /><div><strong>Billing data is unavailable</strong><p>{studio.error}</p></div><Button variant="ghost" onClick={() => void studio?.refresh()}>Try again</Button></div> : <><section className="premium-card"><div><span className="overline">CEZIK PREMIUM</span><h2>{premiumActive ? 'Premium is active' : 'Make every export clean.'}</h2><p>{premiumActive ? `${subscription?.subscription_plans?.included_credits.toLocaleString() ?? 'Included'} credits renew each month. Your paid-generation and Premium exports are watermark-free.` : 'All tools, priority processing, 1,000 included credits every month, and clean exports. Extra credit packs are also clean.'}</p>{subscription?.current_period_end && <small>Current period ends {new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(subscription.current_period_end))}.</small>}</div>{premiumActive ? <span className="premium-status"><ShieldCheck size={17} /> Active</span> : <Button onClick={() => void startPremium()} disabled={startingPremium || subscription?.status === 'approval_pending'}>{startingPremium ? 'Opening PayPal…' : subscription?.status === 'approval_pending' ? 'Awaiting approval' : 'Get Premium'} <ArrowRight size={15} /></Button>}</section>{premiumMessage && <div className="data-state error"><X size={18} /><div><strong>Premium checkout</strong><p>{premiumMessage}</p></div></div>}
+    <section className="billing-section"><div className="section-heading"><div><h2>Add clean-output credits</h2><p>Credit packs do not expire under this policy and remove the watermark only from generations they fund.</p></div></div><div className="package-grid">{studio?.loading ? <div className="package-loading">Loading available credit packages…</div> : packages.length ? packages.map((creditPackage) => <article className="package-card" key={creditPackage.id}><span>{creditPackage.name}</span><strong>{creditPackage.credits.toLocaleString()} <i>credits</i></strong><p>{creditPackage.description}</p><b>{new Intl.NumberFormat(undefined, { style: 'currency', currency: creditPackage.currency }).format(Number(creditPackage.price))}</b><PayPalCheckoutButton creditPackage={creditPackage} onComplete={() => void studio?.refresh()} /></article>) : <div className="package-loading">No credit packages are available right now.</div>}</div></section>
     <section className="billing-history"><div><h2>Recent credit activity</h2><p>Only successful, server-recorded ledger entries appear here.</p></div>{transactions.length ? <div className="activity-list">{transactions.map((transaction) => <div key={transaction.id}><div><strong>{transaction.description}</strong><small>{new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(transaction.created_at))}</small></div><span className={transaction.amount > 0 ? 'positive' : ''}>{transaction.amount > 0 ? '+' : ''}{transaction.amount.toLocaleString()} credits</span></div>)}</div> : <div className="data-state"><History size={18} /><div><strong>No credit activity yet</strong><p>Your purchases and generation usage will appear after they are processed.</p></div></div>}</section>
     <section className="billing-history"><div><h2>Purchase history</h2><p>Payment status is refreshed after PayPal verification.</p></div>{purchases.length ? <div className="activity-list">{purchases.map((purchase) => <div key={purchase.id}><div><strong>{purchase.credit_packages?.name ?? 'Credit package'} · {purchase.credit_amount.toLocaleString()} credits</strong><small>{new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(purchase.created_at))}</small></div><span>{purchase.status}</span></div>)}</div> : <div className="data-state"><CreditCard size={18} /><div><strong>No purchases yet</strong><p>Completed and pending credit purchases will appear here.</p></div></div>}</section></>}
   </div></Shell>

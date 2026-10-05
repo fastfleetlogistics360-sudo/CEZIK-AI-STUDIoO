@@ -88,3 +88,56 @@ duplicate event IDs. Only a verified completed capture whose order, capture ID,
 amount, and currency match a local purchase can call the locked wallet grant
 function. The PayPal client secret never reaches the browser; the authenticated
 SDK-config endpoint returns only the public client ID needed to load the SDK.
+
+## Premium subscriptions and watermark policy
+
+The hybrid entitlement migrations add three distinct credit sources:
+
+- **Free credits:** promotional credits that create watermark-required assets.
+- **Purchased credits:** one-time packs that create clean generated assets and
+  do not expire under this policy.
+- **Premium allowance:** 1,000 clean-output credits granted for each verified
+  active PayPal billing period. These expire at the end of the allowance period.
+
+`start_ai_job` allocates credit grants server-side and stores the allocation and
+watermark decision on the immutable job record. A free image generation is
+written to Storage only as a CEZIK-watermarked SVG delivery asset; its clean
+provider image is never uploaded by CEZIK. Browser-only native image tools also
+watermark free exports locally, while Premium exports remain clean.
+
+Apply both new migrations before deploying the code:
+
+```bash
+supabase db push
+supabase functions deploy create-paypal-premium-subscription
+supabase functions deploy billing-webhook
+supabase functions deploy process-ai-job
+```
+
+Create the recurring Premium product and monthly plan in the **PayPal Sandbox**
+dashboard at **USD 9.99/month** for the launch offer: it includes 1,000 CEZIK
+credits. The active `gpt-image-1` adapter explicitly uses OpenAI's low-quality
+tier so the allowance is cost-bounded. Run `202610050003_launch_pricing.sql`
+to update the one-time packs before enabling checkout. Do not put prices or
+PayPal plan IDs in the browser. Set these additional Edge Function secrets:
+
+```text
+PAYPAL_PREMIUM_PLAN_ID=the_sandbox_monthly_plan_id
+CEZIK_APP_URL=https://your-public-cezik-domain.example
+```
+
+Add these webhook event types to the existing Sandbox webhook registration in
+addition to the credit-purchase events:
+
+```text
+BILLING.SUBSCRIPTION.ACTIVATED
+BILLING.SUBSCRIPTION.CANCELLED
+BILLING.SUBSCRIPTION.SUSPENDED
+BILLING.SUBSCRIPTION.EXPIRED
+PAYMENT.SALE.COMPLETED
+```
+
+The webhook still verifies every notification with PayPal before changing any
+subscription, credit, or entitlement state. The application remains
+**Sandbox-only** until the PayPal live-environment rollout is deliberately
+implemented and reviewed; do not point live credentials at this code yet.
