@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createRoot } from 'react-dom/client'
 import type { Session } from '@supabase/supabase-js'
 import {
-  ArrowRight, CheckCircle2, ChevronDown, Clapperboard, Clock3, Command, Copy,
+  ArrowRight, CheckCircle2, ChevronDown, Clapperboard, Clock3, Command, Copy, Eye, EyeOff,
   Download, Eraser, FileImage, FileVideo, FolderOpen, Image, LayoutDashboard, Maximize2, Minimize2,
   CreditCard, History, LoaderCircle, LockKeyhole, LogOut, Mail, MoreHorizontal, PanelLeftClose, Play, Plus, RefreshCw, Search, Settings,
   ShieldCheck, SlidersHorizontal, Sparkles, Upload, UserRound, Video, WandSparkles, X, Zap
@@ -31,6 +31,44 @@ function pageForPath(pathname: string): Page {
 
 function isKnownPath(pathname: string) {
   return Object.values(pagePaths).includes(pathname)
+}
+
+function SeoMetadata({ page }: { page: Page }) {
+  useEffect(() => {
+    const isPublicPage = page === 'welcome'
+    const title = isPublicPage ? 'CEZIK AI Studio | Create with AI' : 'CEZIK AI Studio'
+    const description = isPublicPage
+      ? 'CEZIK AI Studio is a creative workspace for AI-powered images, video, and practical image tools.'
+      : 'CEZIK AI Studio workspace.'
+    const updateMeta = (selector: string, attributes: Record<string, string>) => {
+      let element = document.head.querySelector<HTMLMetaElement>(selector)
+      if (!element) { element = document.createElement('meta'); document.head.appendChild(element) }
+      Object.entries(attributes).forEach(([key, value]) => element?.setAttribute(key, value))
+    }
+    document.title = title
+    updateMeta('meta[name="description"]', { name: 'description', content: description })
+    updateMeta('meta[name="robots"]', { name: 'robots', content: isPublicPage ? 'index,follow' : 'noindex,nofollow' })
+    updateMeta('meta[property="og:title"]', { property: 'og:title', content: title })
+    updateMeta('meta[property="og:description"]', { property: 'og:description', content: description })
+    updateMeta('meta[name="twitter:card"]', { name: 'twitter:card', content: 'summary' })
+    let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')
+    if (!canonical) { canonical = document.createElement('link'); canonical.rel = 'canonical'; document.head.appendChild(canonical) }
+    canonical.href = `${window.location.origin}${pagePaths[page]}`
+    const structuredDataId = 'cezik-structured-data'
+    document.getElementById(structuredDataId)?.remove()
+    if (isPublicPage) {
+      const structuredData = document.createElement('script')
+      structuredData.id = structuredDataId
+      structuredData.type = 'application/ld+json'
+      structuredData.text = JSON.stringify({
+        '@context': 'https://schema.org', '@type': 'WebApplication', name: 'CEZIK AI Studio',
+        url: `${window.location.origin}/`, applicationCategory: 'MultimediaApplication', operatingSystem: 'Web',
+        description,
+      })
+      document.head.appendChild(structuredData)
+    }
+  }, [page])
+  return null
 }
 
 type PayPalButtons = {
@@ -68,6 +106,10 @@ function loadPaypalSdk(clientId: string, currency: string) {
     script.onload = () => window.paypal ? resolve() : reject(new Error('PayPal checkout did not load.'))
     script.onerror = () => reject(new Error('PayPal checkout could not load.'))
     document.head.appendChild(script)
+  })
+  paypalSdkPromise.catch(() => {
+    paypalSdkPromise = null
+    paypalSdkCurrency = null
   })
   return paypalSdkPromise
 }
@@ -247,11 +289,13 @@ function PayPalCheckoutButton({ creditPackage, onComplete }: { creditPackage: Cr
   const container = useRef<HTMLDivElement>(null)
   const orderInProgress = useRef(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [ready, setReady] = useState(false)
   useEffect(() => {
     let active = true
     let buttons: PayPalButtons | undefined
     let purchaseId: string | null = null
     const client = supabase
+    setReady(false)
     const render = async () => {
       if (!client || !container.current) { if (active) setMessage('Sign in to purchase credits.'); return }
       try {
@@ -282,6 +326,7 @@ function PayPalCheckoutButton({ creditPackage, onComplete }: { creditPackage: Cr
           onError: () => { if (active) setMessage('Checkout could not be completed. No credits were added.') },
         })
         await buttons.render(container.current)
+        if (active) setReady(true)
       } catch (error) {
         if (active) setMessage(error instanceof Error ? error.message : 'PayPal checkout is unavailable.')
       }
@@ -289,7 +334,7 @@ function PayPalCheckoutButton({ creditPackage, onComplete }: { creditPackage: Cr
     void render()
     return () => { active = false; buttons?.close?.(); if (container.current) container.current.replaceChildren() }
   }, [creditPackage.id, creditPackage.currency, onComplete])
-  return <div className="paypal-checkout"><div ref={container} />{message && <small role="status">{message}</small>}</div>
+  return <div className="paypal-checkout" aria-busy={!ready && !message}><div ref={container} />{message ? <small role="status">{message}</small> : !ready && <small role="status">Preparing secure checkout…</small>}</div>
 }
 
 function ProjectCard({ project }: { project: ProjectCardData }) { return <article className="project-card"><div className={`project-thumb ${project.color}`}>{project.assetUrl && <img src={project.assetUrl} alt="" />}<span className="duration">{project.type}</span></div><div className="project-info"><div><strong>{project.name}</strong><small>{project.type}</small></div></div><div className="project-meta"><span>{project.date}</span><b className={project.status === 'Ready' ? 'ready' : ''}>{project.status}</b></div></article> }
@@ -631,10 +676,12 @@ function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode;
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
-  const setMode = (nextMode: AuthMode) => { setMessage(null); setPassword(''); setConfirmPassword(''); onModeChange(nextMode) }
+  const setMode = (nextMode: AuthMode) => { setMessage(null); setPassword(''); setConfirmPassword(''); setShowPassword(false); setShowConfirmPassword(false); onModeChange(nextMode) }
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setMessage(null)
@@ -686,8 +733,8 @@ function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode;
         <div className="auth-card-heading"><div><h2>{mode === 'signup' ? 'Create your account' : mode === 'reset' ? 'Recover access' : 'Sign in'}</h2><p>{mode === 'signup' ? 'Already have an account?' : mode === 'signin' ? 'New to CEZIK?' : 'Remembered your password?' } <button type="button" onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}>{mode === 'signup' ? 'Sign in' : 'Create one'}</button></p></div><span className="auth-mark"><Logo markOnly /></span></div>
         {mode === 'signup' && <label className="auth-field"><span>Full name</span><div><Mail size={16} /><input required value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Your name" autoComplete="name" /></div></label>}
         <label className="auth-field"><span>Email address</span><div><Mail size={16} /><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" /></div></label>
-        {mode !== 'reset' && <label className="auth-field"><span>Password</span><div><LockKeyhole size={16} /><input required minLength={8} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} /></div></label>}
-        {mode === 'signup' && <label className="auth-field"><span>Confirm password</span><div><LockKeyhole size={16} /><input required minLength={8} type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Repeat your password" autoComplete="new-password" /></div></label>}
+        {mode !== 'reset' && <label className="auth-field"><span>Password</span><div><LockKeyhole size={16} /><input required minLength={8} type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} /><button type="button" className="password-toggle" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>}
+        {mode === 'signup' && <label className="auth-field"><span>Confirm password</span><div><LockKeyhole size={16} /><input required minLength={8} type={showConfirmPassword ? 'text' : 'password'} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Repeat your password" autoComplete="new-password" /><button type="button" className="password-toggle" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? 'Hide password' : 'Show password'} aria-pressed={showConfirmPassword}>{showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>}
         {mode === 'signin' && <button type="button" className="forgot-password" onClick={() => setMode('reset')}>Forgot password?</button>}
         {message && <div role="status" className={`auth-message ${message.type}`}><span>{message.type === 'success' ? <CheckCircle2 size={16} /> : <X size={16} />}</span>{message.text}</div>}
         <button className="auth-submit" disabled={loading}>{loading ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}{loading ? 'Please wait…' : copy.submit}</button>
@@ -750,6 +797,10 @@ function App() {
     }
     void refreshStudio()
   }, [session, refreshStudio])
+
+  useEffect(() => {
+    if (session) void loadPaypalConfig().catch(() => undefined)
+  }, [session])
 
   useEffect(() => {
     if (!supabase) return
@@ -833,7 +884,7 @@ function App() {
             : page === 'background-remover' || page === 'image-compressor' || page === 'image-resizer' || page === 'image-converter'
               ? <NativeImageTool kind={page} onPage={navigate} />
               : <Editor onPage={navigate} />
-  return <StudioContext.Provider value={studio}><AccountContext.Provider value={{ displayName, email, initials: displayInitials(displayName, email), signOut }}>{screen}</AccountContext.Provider></StudioContext.Provider>
+  return <StudioContext.Provider value={studio}><AccountContext.Provider value={{ displayName, email, initials: displayInitials(displayName, email), signOut }}><SeoMetadata page={page} />{screen}</AccountContext.Provider></StudioContext.Provider>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)

@@ -175,6 +175,9 @@
 .auth-field > div:focus-within { border-color: #22d9ff; box-shadow: 0 0 0 3px #20d9ff15, 0 0 16px #a440ed18; color: #35dfff; }
 .auth-field input { min-width: 0; flex: 1; color: #f3effb; background: transparent; border: 0; outline: 0; font-size: 11px; }
 .auth-field input::placeholder { color: #696477; }
+.password-toggle { flex: none; display: grid; place-items: center; width: 30px; height: 30px; color: #a9a1bf; border-radius: 6px; }
+.password-toggle:hover { color: #f3effb; background: #ffffff0d; }
+.password-toggle[aria-pressed="true"] { color: #41dfff; }
 .forgot-password { color: #38dfff; margin: 13px 0 0 auto; display: block; font-size: 10px; }
 .auth-message { margin-top: 16px; border-radius: 8px; padding: 10px; display: flex; align-items: flex-start; gap: 8px; font-size: 10px; line-height: 1.55; }
 .auth-message.success { background: #1ed38b18; border: 1px solid #4cdeaf51; color: #b9f7df; }
@@ -207,4 +210,6 @@
   .auth-intro > p, .auth-feature { margin-left: auto; margin-right: auto; }
   .auth-feature { text-align: left; margin-top: 24px; }
   .auth-card { max-width: 440px; width: 100%; margin: auto; padding: 22px; }
+  /* iOS zooms focused form fields below 16px. */
+  .auth-field input { font-size: 16px; }
 }
