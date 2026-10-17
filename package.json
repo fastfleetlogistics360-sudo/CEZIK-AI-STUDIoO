@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "tsc -p tsconfig.test.json && node --test test/greeting.test.mjs",
     "preview": "vite preview",
     "seo:sitemap": "node scripts/generate-sitemap.mjs",
     "supabase:email-template": "node scripts/apply-supabase-confirmation-template.mjs"

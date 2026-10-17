@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { isActivityAvailable, loadStudioData, type Creation, type CreditPackage, type StudioData } from './lib/cezik'
+import { greetingForDate, millisecondsUntilNextLocalHour } from './lib/greeting'
 import { acceptedImageTypes, addCezikWatermark, compressImage, convertImage, extensionByType, filenameFor, formatBytes, readImageDetails, removeBackground, resizeImage, validateImageFile, type ImageDetails, type OutputFormat } from './lib/image-processing'
 import './styles.css'
 import './neon.css'
@@ -17,7 +18,7 @@ import './native-image-tools.css'
 import './product.css'
 
 type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'billing' | 'account' | 'settings' | 'generate' | 'image' | 'editor' | 'background-remover' | 'image-compressor' | 'image-resizer' | 'image-converter'
-type AuthMode = 'signin' | 'signup' | 'reset'
+type AuthMode = 'signin' | 'signup' | 'reset' | 'update-password'
 
 const pagePaths: Record<Page, string> = {
   welcome: '/', auth: '/auth', home: '/dashboard', projects: '/projects', billing: '/billing', account: '/account', settings: '/settings',
@@ -167,12 +168,30 @@ function useAccount() {
   return useContext(AccountContext)
 }
 
-function greetingForCurrentTime() {
-  const hour = new Date().getHours()
-  if (hour >= 5 && hour < 12) return 'Good morning'
-  if (hour < 17) return 'Good afternoon'
-  if (hour < 22) return 'Good evening'
-  return 'Welcome back'
+function useCurrentGreeting() {
+  const [greeting, setGreeting] = useState(() => greetingForDate())
+
+  useEffect(() => {
+    let timer: number | undefined
+    const refresh = () => setGreeting(greetingForDate())
+    const schedule = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => { refresh(); schedule() }, millisecondsUntilNextLocalHour())
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') { refresh(); schedule() }
+    }
+    refresh(); schedule()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onVisibilityChange)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', onVisibilityChange)
+    }
+  }, [])
+
+  return greeting
 }
 
 function displayInitials(name: string | null, email: string | null) {
@@ -275,8 +294,9 @@ function Dashboard({ onPage }: { onPage: (p: Page) => void }) {
   const studio = useStudio()
   const account = useAccount()
   const projects = (studio?.data?.creations ?? []).map(toProjectCard)
+  const greeting = useCurrentGreeting()
   return <Shell page="home" onPage={onPage}><div className="content dashboard">
-    <section className="dashboard-hero"><div><span className="overline">YOUR CEZIK WORKSPACE</span><h1>{greetingForCurrentTime()}{account?.displayName ? `, ${account.displayName}` : ''}.</h1><p>Choose a tool or continue with your recent work.</p></div><Button onClick={() => onPage('image')}><Sparkles size={17} /> Create with AI</Button></section>
+    <section className="dashboard-hero"><div><span className="overline">YOUR CEZIK WORKSPACE</span><h1>{greeting}{account?.displayName ? `, ${account.displayName}` : ''}.</h1><p>Choose a tool or continue with your recent work.</p></div><Button onClick={() => onPage('image')}><Sparkles size={17} /> Create with AI</Button></section>
     <section className="credit-summary"><div><span className="overline">CEZIK CREDITS</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><p>{studio?.error ? 'Your wallet could not be loaded. Please refresh and try again.' : 'Your credits and purchases are verified server-side.'}</p></div><Button variant="ghost" onClick={() => onPage('billing')}>Manage credits <ArrowRight size={15} /></Button></section>
     <section className="tool-grid">{tools.map(({ name: toolName, description, icon: Icon, color, page }) => <button className="tool-card" key={toolName} onClick={() => page && onPage(page)} disabled={!page}><span className={`tool-icon ${color}`}><Icon size={21} /></span><span><strong>{toolName}</strong><small>{description}</small></span>{page ? <ArrowRight size={18} /> : <Clock3 size={17} />}</button>)}</section>
     <section className="section-heading"><div><h2>Continue creating</h2><p>Your recent projects</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></section>
@@ -690,6 +710,15 @@ function SettingsPage({ onPage }: { onPage: (p: Page) => void }) {
   return <Shell page="settings" onPage={onPage} title="Settings"><div className="content settings-page"><section className="page-head"><div><span className="overline">SETTINGS</span><h1>Account settings</h1><p>Only controls backed by your current account are shown here.</p></div></section><section className="settings-list"><button onClick={() => onPage('account')}><span><UserRound size={18} /><div><strong>Account details</strong><small>View the name and email stored in your CEZIK profile.</small></div></span><ArrowRight size={17} /></button><div className="settings-action"><span><ShieldCheck size={18} /><div><strong>Password</strong><small>Send a secure password reset link to {account?.email ?? 'your email'}.</small></div></span><Button variant="ghost" onClick={() => void sendReset()} disabled={working || !account?.email}>Send reset link</Button></div><div className="settings-action"><span><LogOut size={18} /><div><strong>Sign out</strong><small>End this browser session.</small></div></span><Button variant="ghost" onClick={() => void signOut()} disabled={working}>Sign out</Button></div></section>{message && <div className="data-state"><Mail size={18} /><div><strong>Security update</strong><p>{message}</p></div></div>}</div></Shell>
 }
 
+function friendlyAuthError(error: unknown) {
+  const message = error instanceof Error ? error.message : 'Something went wrong. Please try again.'
+  const normalized = message.toLowerCase()
+  if (normalized.includes('invalid login credentials')) return 'That email or password is incorrect. Please try again or reset your password.'
+  if (normalized.includes('email not confirmed')) return 'Please confirm your email address before signing in.'
+  if (normalized.includes('already registered')) return 'An account already exists for this email. Try signing in instead.'
+  return message
+}
+
 function Editor({ onPage }: { onPage: (p: Page) => void }) {
   return <Shell page="editor" onPage={onPage} title="AI Video Editor"><div className="content upcoming-page"><Clapperboard size={28} /><span className="overline">COMING SOON</span><h1>AI video editing is not available yet.</h1><p>The prior editor screen was a visual prototype with no project, media, export, or AI-editing backend. It has been replaced with this honest availability state until those services are connected.</p><div><Button onClick={() => onPage('projects')}>View creations</Button><Button variant="ghost" onClick={() => onPage('generate')}>Try video generation</Button></div></div></Shell>
 }
@@ -712,7 +741,7 @@ function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode;
       setMessage({ type: 'error', text: 'Supabase still needs its project URL and publishable key. Add them to .env.local to enable live authentication.' })
       return
     }
-    if (mode === 'signup' && password !== confirmPassword) {
+    if ((mode === 'signup' || mode === 'update-password') && password !== confirmPassword) {
       setMessage({ type: 'error', text: 'Your passwords do not match. Please try again.' })
       return
     }
@@ -722,6 +751,11 @@ function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode;
         const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin })
         if (error) throw error
         setMessage({ type: 'success', text: 'Password reset instructions are on their way. Check your inbox.' })
+      } else if (mode === 'update-password') {
+        const { error } = await supabase.auth.updateUser({ password })
+        if (error) throw error
+        setMessage({ type: 'success', text: 'Your password has been updated. Redirecting to your studio…' })
+        window.setTimeout(onSuccess, 700)
       } else if (mode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
           email,
@@ -737,7 +771,7 @@ function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode;
         onSuccess()
       }
     } catch (error) {
-      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Something went wrong. Please try again.' })
+      setMessage({ type: 'error', text: friendlyAuthError(error) })
     } finally { setLoading(false) }
   }
 
@@ -745,6 +779,8 @@ function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode;
     ? { eyebrow: 'YOUR CREATIVE ACCOUNT', title: <>Start making the <i>impossible.</i></>, detail: 'Create your CEZIK account to save ideas, collaborate, and create without limits.', submit: 'Create account' }
     : mode === 'reset'
       ? { eyebrow: 'ACCOUNT RECOVERY', title: <>Reset your <i>password.</i></>, detail: 'Tell us where to send secure recovery instructions.', submit: 'Send reset link' }
+      : mode === 'update-password'
+        ? { eyebrow: 'ACCOUNT RECOVERY', title: <>Choose a new <i>password.</i></>, detail: 'Set a new password to finish recovering your account.', submit: 'Update password' }
       : { eyebrow: 'WELCOME BACK', title: <>Welcome back to <i>CEZIK.</i></>, detail: 'Sign in to continue building your next moving story.', submit: 'Sign in' }
 
   return <main className="auth-page">
@@ -753,11 +789,11 @@ function AuthScreen({ mode, onModeChange, onBack, onSuccess }: { mode: AuthMode;
     <section className="auth-layout">
       <div className="auth-intro"><span className="overline"><Sparkles size={13} /> {copy.eyebrow}</span><h1>{copy.title}</h1><p>{copy.detail}</p><div className="auth-feature"><span><CheckCircle2 size={17} /></span><p><strong>Your work, always ready.</strong> Your projects and creative preferences stay securely connected to your account.</p></div></div>
       <form className="auth-card" onSubmit={submit}>
-        <div className="auth-card-heading"><div><h2>{mode === 'signup' ? 'Create your account' : mode === 'reset' ? 'Recover access' : 'Sign in'}</h2><p>{mode === 'signup' ? 'Already have an account?' : mode === 'signin' ? 'New to CEZIK?' : 'Remembered your password?' } <button type="button" onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}>{mode === 'signup' ? 'Sign in' : 'Create one'}</button></p></div><span className="auth-mark"><Logo markOnly /></span></div>
+        <div className="auth-card-heading"><div><h2>{mode === 'signup' ? 'Create your account' : mode === 'reset' ? 'Recover access' : mode === 'update-password' ? 'Choose a new password' : 'Sign in'}</h2>{mode !== 'update-password' && <p>{mode === 'signup' ? 'Already have an account?' : mode === 'signin' ? 'New to CEZIK?' : 'Remembered your password?' } <button type="button" onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}>{mode === 'signup' ? 'Sign in' : 'Create one'}</button></p>}</div><span className="auth-mark"><Logo markOnly /></span></div>
         {mode === 'signup' && <label className="auth-field"><span>Full name</span><div><Mail size={16} /><input required value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Your name" autoComplete="name" /></div></label>}
-        <label className="auth-field"><span>Email address</span><div><Mail size={16} /><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" /></div></label>
-        {mode !== 'reset' && <label className="auth-field"><span>Password</span><div><LockKeyhole size={16} /><input required minLength={8} type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} /><button type="button" className="password-toggle" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>}
-        {mode === 'signup' && <label className="auth-field"><span>Confirm password</span><div><LockKeyhole size={16} /><input required minLength={8} type={showConfirmPassword ? 'text' : 'password'} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Repeat your password" autoComplete="new-password" /><button type="button" className="password-toggle" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? 'Hide password' : 'Show password'} aria-pressed={showConfirmPassword}>{showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>}
+        {mode !== 'update-password' && <label className="auth-field"><span>Email address</span><div><Mail size={16} /><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" /></div></label>}
+        {mode !== 'reset' && <label className="auth-field"><span>Password</span><div><LockKeyhole size={16} /><input required minLength={8} type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} /><button type="button" className="password-toggle" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>}
+        {(mode === 'signup' || mode === 'update-password') && <label className="auth-field"><span>Confirm password</span><div><LockKeyhole size={16} /><input required minLength={8} type={showConfirmPassword ? 'text' : 'password'} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Repeat your password" autoComplete="new-password" /><button type="button" className="password-toggle" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? 'Hide password' : 'Show password'} aria-pressed={showConfirmPassword}>{showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>}
         {mode === 'signin' && <button type="button" className="forgot-password" onClick={() => setMode('reset')}>Forgot password?</button>}
         {message && <div role="status" className={`auth-message ${message.type}`}><span>{message.type === 'success' ? <CheckCircle2 size={16} /> : <X size={16} />}</span>{message.text}</div>}
         <button className="auth-submit" disabled={loading}>{loading ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}{loading ? 'Please wait…' : copy.submit}</button>
@@ -776,6 +812,7 @@ function App() {
   const [studioLoading, setStudioLoading] = useState(false)
   const [studioError, setStudioError] = useState<string | null>(null)
   const studioRequestRef = useRef(0)
+  const sessionUserIdRef = useRef<string | null>(null)
   const intendedPageRef = useRef<Page | null>(null)
   const displayName = studioData?.profile?.display_name || session?.user.user_metadata.full_name || null
   const email = studioData?.profile?.email || session?.user.email || null
@@ -822,6 +859,19 @@ function App() {
   }, [session, refreshStudio])
 
   useEffect(() => {
+    if (!session) return
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'visible') void refreshStudio()
+    }
+    window.addEventListener('focus', refreshOnReturn)
+    document.addEventListener('visibilitychange', refreshOnReturn)
+    return () => {
+      window.removeEventListener('focus', refreshOnReturn)
+      document.removeEventListener('visibilitychange', refreshOnReturn)
+    }
+  }, [session, refreshStudio])
+
+  useEffect(() => {
     if (session) void loadPaypalConfig().catch(() => undefined)
   }, [session])
 
@@ -829,15 +879,32 @@ function App() {
     if (!supabase) return
     let mounted = true
     let authEventReceived = false
-    supabase.auth.getSession().then(({ data }) => {
-      if (mounted && !authEventReceived) { setSession(data.session); setAuthReady(true) }
-    }).catch(() => { if (mounted && !authEventReceived) setAuthReady(true) })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (!mounted) return
-      authEventReceived = true
+    const applySession = (nextSession: Session | null) => {
+      const nextUserId = nextSession?.user.id ?? null
+      if (sessionUserIdRef.current !== nextUserId) {
+        studioRequestRef.current += 1
+        setStudioData(null)
+        setStudioError(null)
+        setStudioLoading(false)
+        sessionUserIdRef.current = nextUserId
+      }
       setSession(nextSession)
       setAuthReady(true)
+    }
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted && !authEventReceived) applySession(data.session)
+    }).catch(() => { if (mounted && !authEventReceived) setAuthReady(true) })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!mounted) return
+      authEventReceived = true
+      applySession(nextSession)
       if (nextSession) setPage((current) => {
+        if (event === 'PASSWORD_RECOVERY') {
+          intendedPageRef.current = null
+          setAuthMode('update-password')
+          window.history.replaceState({}, '', pagePaths.auth)
+          return 'auth'
+        }
         const destination = intendedPageRef.current ?? (current === 'welcome' || current === 'auth' ? 'home' : current)
         intendedPageRef.current = null
         window.history.replaceState({}, '', pagePaths[destination])

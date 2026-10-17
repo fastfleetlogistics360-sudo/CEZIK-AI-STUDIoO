@@ -3,5 +3,6 @@ dist/
 .DS_Store
 *.tsbuildinfo
 .vite/
+.test-build/
 .env.local
 supabase/.temp/
