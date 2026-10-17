@@ -5,7 +5,7 @@ import {
   ArrowRight, CheckCircle2, ChevronDown, Clapperboard, Clock3, Command, Copy, Eye, EyeOff,
   Download, Eraser, FileImage, FileVideo, FolderOpen, Image, LayoutDashboard, Maximize2, Minimize2,
   CreditCard, History, LoaderCircle, LockKeyhole, LogOut, Mail, MoreHorizontal, PanelLeftClose, Play, Plus, RefreshCw, Search, Settings,
-  ShieldCheck, SlidersHorizontal, Sparkles, Upload, UserRound, Video, WandSparkles, X, Zap
+  ShieldCheck, SlidersHorizontal, Sparkles, Upload, UserRound, Video, WandSparkles, X, Zap, Menu
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { isActivityAvailable, loadStudioData, type Creation, type CreditPackage, type StudioData } from './lib/cezik'
@@ -16,6 +16,8 @@ import './neon.css'
 import './image-generator.css'
 import './native-image-tools.css'
 import './product.css'
+import './refinement.css'
+import './tool-refinement.css'
 
 type Page = 'welcome' | 'auth' | 'home' | 'projects' | 'billing' | 'account' | 'settings' | 'generate' | 'image' | 'editor' | 'background-remover' | 'image-compressor' | 'image-resizer' | 'image-converter'
 type AuthMode = 'signin' | 'signup' | 'reset' | 'update-password'
@@ -239,10 +241,10 @@ function Button({ children, variant = 'primary', onClick, className = '', disabl
   return <button onClick={onClick} disabled={disabled} className={`button ${variant} ${className}`}>{children}</button>
 }
 
-function TopBar({ onPage, title, compact = false }: { onPage: (p: Page) => void; title?: string; compact?: boolean }) {
+function TopBar({ onPage, title, compact = false, onOpenMobileNav, mobileNavOpen = false }: { onPage: (p: Page) => void; title?: string; compact?: boolean; onOpenMobileNav?: () => void; mobileNavOpen?: boolean }) {
   const account = useAccount()
   return <header className={`topbar ${compact ? 'compact' : ''}`}>
-    <div className="mobile-logo"><Logo /></div>
+    <div className="mobile-logo"><button className="mobile-menu-button" onClick={onOpenMobileNav} aria-label="Open navigation" aria-expanded={mobileNavOpen}><Menu size={19} /></button><Logo /></div>
     {title && <div className="page-title">{title}</div>}
     <div className="top-actions">
       <button className="profile" onClick={() => onPage('account')} aria-label="Open account"><span>{account?.initials ?? 'CE'}</span><ChevronDown size={15} /></button>
@@ -251,14 +253,14 @@ function TopBar({ onPage, title, compact = false }: { onPage: (p: Page) => void;
   </header>
 }
 
-function Sidebar({ page, onPage }: { page: Page; onPage: (p: Page) => void }) {
+function Sidebar({ page, onPage, mobileOpen, onCloseMobileNav }: { page: Page; onPage: (p: Page) => void; mobileOpen: boolean; onCloseMobileNav: () => void }) {
   const [open, setOpen] = useState(true)
   const studio = useStudio()
   const balance = studio?.data?.balance
   const account = useAccount()
-  return <aside className={`sidebar ${open ? '' : 'collapsed'}`}>
+  return <aside className={`sidebar ${open ? '' : 'collapsed'} ${mobileOpen ? 'mobile-open' : ''}`}>
     <div className="side-top"><Logo markOnly={!open} /><button onClick={() => setOpen(!open)} className="collapse" aria-label={open ? 'Collapse sidebar' : 'Expand sidebar'}><PanelLeftClose size={18} /></button></div>
-    <nav>{navItems.map(({ id, label, icon: Icon, comingSoon }) => <button key={label} onClick={() => id && onPage(id)} disabled={!id} aria-label={label} className={`nav-item ${page === id ? 'active' : ''}`}><Icon size={19} /><span>{label}</span>{comingSoon && <em>SOON</em>}</button>)}</nav>
+    <nav>{navItems.map(({ id, label, icon: Icon, comingSoon }) => <button key={label} onClick={() => { if (id) { onPage(id); onCloseMobileNav() } }} disabled={!id} aria-label={label} className={`nav-item ${page === id ? 'active' : ''}`}><Icon size={19} /><span>{label}</span>{comingSoon && <em>SOON</em>}</button>)}</nav>
     <div className="side-bottom">
       {open && <div className="usage-card"><span>CEZIK CREDITS</span><strong>{studio?.loading ? '…' : balance ?? '—'} <i>available</i></strong><div className="progress"><b style={{ width: balance === undefined ? '0%' : `${Math.min(100, Math.max(4, balance / 10))}%` }} /></div><button onClick={() => onPage('billing')}>Manage credits <ArrowRight size={13} /></button></div>}
       <button className="account" onClick={() => onPage('account')} aria-label="Open account"><span className="avatar">{account?.initials ?? 'CE'}</span>{open && <span><strong>{account?.displayName ?? 'Your account'}</strong><small>{account?.email ?? 'Account details'}</small></span>}<MoreHorizontal size={18} /></button>
@@ -267,7 +269,13 @@ function Sidebar({ page, onPage }: { page: Page; onPage: (p: Page) => void }) {
 }
 
 function Shell({ page, onPage, children, title, editor = false }: { page: Page; onPage: (p: Page) => void; children: ReactNode; title?: string; editor?: boolean }) {
-  return <div className={`app-shell ${editor ? 'editor-shell' : ''}`}><Sidebar page={page} onPage={onPage} /><main><TopBar onPage={onPage} title={title} compact={editor} />{children}</main></div>
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileNavOpen(false) }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [])
+  return <div className={`app-shell ${editor ? 'editor-shell' : ''}`}><button className={`mobile-nav-scrim ${mobileNavOpen ? 'visible' : ''}`} aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} /><Sidebar page={page} onPage={onPage} mobileOpen={mobileNavOpen} onCloseMobileNav={() => setMobileNavOpen(false)} /><main><TopBar onPage={onPage} title={title} compact={editor} onOpenMobileNav={() => setMobileNavOpen(true)} mobileNavOpen={mobileNavOpen} />{children}</main></div>
 }
 
 function Welcome({ onAuth, onExplore }: { onAuth: (mode: AuthMode) => void; onExplore: () => void }) {
@@ -295,13 +303,18 @@ function Dashboard({ onPage }: { onPage: (p: Page) => void }) {
   const account = useAccount()
   const projects = (studio?.data?.creations ?? []).map(toProjectCard)
   const greeting = useCurrentGreeting()
-  return <Shell page="home" onPage={onPage}><div className="content dashboard">
-    <section className="dashboard-hero"><div><span className="overline">YOUR CEZIK WORKSPACE</span><h1>{greeting}{account?.displayName ? `, ${account.displayName}` : ''}.</h1><p>Choose a tool or continue with your recent work.</p></div><Button onClick={() => onPage('image')}><Sparkles size={17} /> Create with AI</Button></section>
-    <section className="credit-summary"><div><span className="overline">CEZIK CREDITS</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><p>{studio?.error ? 'Your wallet could not be loaded. Please refresh and try again.' : 'Your credits and purchases are verified server-side.'}</p></div><Button variant="ghost" onClick={() => onPage('billing')}>Manage credits <ArrowRight size={15} /></Button></section>
-    <section className="tool-grid">{tools.map(({ name: toolName, description, icon: Icon, color, page }) => <button className="tool-card" key={toolName} onClick={() => page && onPage(page)} disabled={!page}><span className={`tool-icon ${color}`}><Icon size={21} /></span><span><strong>{toolName}</strong><small>{description}</small></span>{page ? <ArrowRight size={18} /> : <Clock3 size={17} />}</button>)}</section>
-    <section className="section-heading"><div><h2>Continue creating</h2><p>Your recent projects</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></section>
+  const primaryTools = tools.filter((tool) => ['Image Generator', 'Video Generator', 'Background Remover'].includes(tool.name))
+  const imageTools = tools.filter((tool) => ['Image Compressor', 'Image Resizer', 'Image Converter'].includes(tool.name))
+  const upcomingTools = tools.filter((tool) => ['AI Video Editor', 'Enhance & Upscale'].includes(tool.name))
+  return <Shell page="home" onPage={onPage}><div className="content dashboard compact-dashboard">
+    <section className="workspace-overview"><div><span className="overline">YOUR WORKSPACE</span><h1>{greeting}{account?.displayName ? `, ${account.displayName}` : ''}.</h1></div><button className="credit-chip" onClick={() => onPage('billing')}><span>Credits</span><strong>{studio?.loading ? '…' : studio?.data?.balance.toLocaleString() ?? '—'}</strong><ArrowRight size={14} /></button></section>
+    {studio?.error && <div className="dashboard-error"><span>Your studio data could not be refreshed.</span><button onClick={() => void studio.refresh()}>Try again</button></div>}
+    <section className="dashboard-section"><div className="section-heading"><div><h2>Create</h2><p>Start with a tool</p></div></div><div className="tool-grid primary-tools">{primaryTools.map(({ name: toolName, icon: Icon, color, page }) => <button className="tool-card" key={toolName} onClick={() => page && onPage(page)}><span className={`tool-icon ${color}`}><Icon size={20} /></span><strong>{toolName}</strong><ArrowRight size={16} /></button>)}</div></section>
+    <section className="dashboard-section image-tools-section"><div className="section-heading"><div><h2>Image tools</h2><p>Quick local edits</p></div></div><div className="image-tools-grid">{imageTools.map(({ name: toolName, icon: Icon, color, page }) => <button key={toolName} onClick={() => page && onPage(page)}><span className={`tool-icon ${color}`}><Icon size={17} /></span><span>{toolName.replace('Image ', '')}</span></button>)}</div></section>
+    <section className="dashboard-section"><div className="section-heading"><div><h2>Recent creations</h2><p>Your latest work</p></div><button onClick={() => onPage('projects')} className="text-button">View all <ArrowRight size={15} /></button></div>
     <section className="project-row">{projects.length > 0 ? projects.slice(0, 4).map((project) => <ProjectCard key={project.id} project={project} />) : <button className="empty-projects" onClick={() => onPage('image')}><Image size={20} /><strong>Your creations will appear here</strong><small>Start with an AI image prompt once the provider is activated.</small></button>}<button onClick={() => onPage('projects')} className="all-projects"> <FolderOpen size={22} /><span>View all creations</span><ArrowRight size={16} /></button></section>
-    <section className="inspiration"><div><span className="overline">EXPLORE THE POSSIBLE</span><h2>Made to make your<br /><i>best work yet.</i></h2><Button variant="ghost" onClick={() => onPage('generate')}>Try video generation <ArrowRight size={16} /></Button></div><div className="inspiration-art"><div className="art-ball" /><div className="art-column" /><span>01<br /><b>CREATE</b></span></div></section>
+    <div className="coming-soon-row">{upcomingTools.map(({ name: toolName, icon: Icon }) => <span key={toolName}><Icon size={13} /> {toolName} · Soon</span>)}</div>
+    </section>
   </div></Shell>
 }
 
@@ -424,7 +437,7 @@ function Generator({ onPage }: { onPage: (p: Page) => void }) {
     }
   }
 
-  return <Shell page="generate" onPage={onPage} title="AI Video Generator"><div className="content generator">
+  return <Shell page="generate" onPage={onPage}><div className="content generator">
     <section className="generator-head"><span className="overline"><Sparkles size={13} /> CEZIK GENERATE</span><h1>Turn a thought into a <i>world.</i></h1><p>Describe what you want to see. We’ll take care of the impossible details.</p></section>
     <section className="generator-credit-bar"><span><Sparkles size={15} /> Your CEZIK Credits</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><i>{cost ? `${cost} credits per generation` : 'Loading activity pricing…'}</i></section>
     <div className="generator-layout"><section className="prompt-column"><div className="prompt-box"><div className="prompt-top"><span><WandSparkles size={16} /> Your prompt</span><small>{prompt.length} / 2,000</small></div><textarea maxLength={2000} value={prompt} onChange={(e) => setPrompt(e.target.value)} /><div className="prompt-bottom"><button disabled><Command size={13} /> Prompt assist soon</button><button disabled><Copy size={14} /> Paste soon</button></div></div>
@@ -509,7 +522,7 @@ function ImageGenerator({ onPage }: { onPage: (p: Page) => void }) {
     }
   }
 
-  return <Shell page="image" onPage={onPage} title="AI Image Generator"><div className="content generator image-generator">
+  return <Shell page="image" onPage={onPage}><div className="content generator image-generator">
     <section className="generator-head"><span className="overline"><Image size={13} /> CEZIK IMAGES</span><h1>Make the imagined <i>visible.</i></h1><p>Describe the visual, choose a composition, and create a private, downloadable image.</p></section>
     <section className="generator-credit-bar"><span><Sparkles size={15} /> Your CEZIK Credits</span><strong>{studio?.loading ? 'Loading…' : studio?.data ? studio.data.balance.toLocaleString() : 'Unavailable'}</strong><i>{cost ? `${cost} credits per image` : 'Run the image migration to load pricing'}</i></section>
     <div className="generator-layout"><section className="prompt-column"><div className="prompt-box"><div className="prompt-top"><span><WandSparkles size={16} /> Your prompt</span><small>{prompt.length} / 2,000</small></div><textarea maxLength={2000} value={prompt} onChange={(event) => setPrompt(event.target.value)} /><div className="prompt-bottom"><span>Images are generated securely and stored in your private workspace.</span></div></div>
@@ -629,7 +642,7 @@ function NativeImageTool({ kind, onPage }: { kind: NativeToolKind; onPage: (p: P
 
   const outputLabel = kind === 'background-remover' ? 'Remove background' : kind === 'image-compressor' ? 'Compress image' : kind === 'image-resizer' ? 'Resize image' : 'Convert image'
   const acceptedFormats = acceptedImageTypes.join(',')
-  return <Shell page={kind} onPage={onPage} title={copy.title.replace('.', '')}><div className="content native-tool-page">
+  return <Shell page={kind} onPage={onPage}><div className="content native-tool-page">
     <section className="native-tool-head"><span className="overline"><Icon size={13} /> CEZIK NATIVE TOOLS</span><h1>{copy.title} <i>{copy.accent}</i></h1><p>{copy.description}</p></section>
     <div className="native-private-note"><LockKeyhole size={16} /><span><strong>Private by default.</strong> Your image stays on this device. Nothing is sent to CEZIK storage and no credits are used.{watermarkRequired ? ' Free exports include a transparent CEZIK watermark.' : ' Premium exports are clean.'}</span></div>
     <section className="native-tool-layout">
